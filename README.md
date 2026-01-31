@@ -35,13 +35,17 @@ Run AI models wherever makes sense for you:
 - **Diff view** for AI-suggested changes (accept/reject)
 - **One-click execution** — run Python or open HTML in browser
 
-### Smart Debugging
+### Smart Debugging & Code Intelligence
 
 - **Clickable error lines** — click an error to jump to the line
 - **Code structure analysis** — automatic import/function/class detection
-- **Flake8 integration** — lint checking built-in
-- **Security scanning** — detect common vulnerabilities
-- **Type checking** — optional mypy integration
+- **Flake8 integration** — real-time lint checking
+- **Security scanning** — Bandit integration for vulnerability detection
+- **Type checking** — MyPy integration for static analysis
+- **Complexity analysis** — Radon metrics for code quality
+- **Code formatting** — Black formatter built-in
+- **Code completion** — Jedi-powered intelligent suggestions
+- **Enhanced syntax highlighting** — Pygments-based coloring
 
 ### RAG (Retrieval Augmented Generation)
 
@@ -65,17 +69,20 @@ Give your local LLM context from your codebase:
 ### 1. Install Dependencies
 
 ```bash
-# Core dependencies
-pip install ollama chromadb langchain-text-splitters langchain-community pillow requests
+# Install all dependencies
+pip install -r requirements.txt
 
-# For document processing (optional)
-pip install unstructured pypdf docx2txt pandas
+# Or install core dependencies manually
+pip install ollama chromadb langchain-text-splitters langchain-community pillow requests python-dotenv
 
 # For GGUF models (optional)
 pip install llama-cpp-python
 
 # For MLX on Apple Silicon (optional)
 pip install mlx mlx-lm
+
+# For code intelligence (recommended)
+pip install jedi pygments flake8 black mypy bandit radon
 ```
 
 ### 2. Set Up API Keys (Optional)
@@ -90,7 +97,7 @@ cp .env.example .env
 ### 3. Run CodeRunner
 
 ```bash
-python CodeRunner_IDE_Triton_1_28_26.py
+python CodeRunner_IDE_Triton_1_30_26.py
 ```
 
 ### 4. Select Your Backend
