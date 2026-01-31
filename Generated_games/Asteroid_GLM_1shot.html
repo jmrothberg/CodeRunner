@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asteroids - 1979 Atari Original</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        
+        canvas {
+            border: 2px solid #fff;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        
+        .game-info {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            font-size: 18px;
+            text-align: center;
+            pointer-events: none;
+            text-shadow: 2px 2px 0 #000;
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            font-size: 14px;
+            text-align: center;
+            opacity: 0.7;
+            text-shadow: 2px 2px 0 #000;
+        }
+        
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 24px;
+            text-align: center;
+            display: none;
+            text-shadow: 2px 2px 0 #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-info">
+        <div>SCORE: <span id="score">0</span></div>
+        <div>HIGH SCORE: <span id="highScore">0</span></div>
+        <div>LIVES: <span id="lives">3</span></div>
+    </div>
+    
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="controls">
+        ← → Rotate | ↑ Thrust | SPACE Fire | P Pause
+    </div>
+    
+    <div class="game-over" id="gameOver">
+        <div>GAME OVER</div>
+        <div style="font-size: 16px; margin-top: 10px;">Press ENTER to restart</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size
+        canvas.width = 800;
+        canvas.height = 600;
+        
+        // Game state
+        let score = 0;
+        let highScore = localStorage.getItem('asteroidsHighScore') || 0;
+        let lives = 3;
+        let gameRunning = true;
+        let isPaused = false;
+        let level = 1;
+        
+        // Update UI
+        document.getElementById('highScore').textContent = highScore;
+        
+        // Input handling
+        const keys = {};
+        
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            
+            if (e.key === 'p' || e.key === 'P') {
+                isPaused = !isPaused;
+                console.log('Game paused:', isPaused);
+            }
+            
+            if (e.key === 'Enter' && !gameRunning) {
+                resetGame();
+            }
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        
+        // Vector math utilities
+        class Vector2D {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+            }
+            
+            add(v) {
+                return new Vector2D(this.x + v.x, this.y + v.y);
+            }
+            
+            subtract(v) {
+                return new Vector2D(this.x - v.x, this.y - v.y);
+            }
+            
+            multiply(scalar) {
+                return new Vector2D(this.x * scalar, this.y * scalar);
+            }
+            
+            magnitude() {
+                return Math.sqrt(this.x * this.x + this.y * this.y);
+            }
+            
+            normalize() {
+                const mag = this.magnitude();
+                if (mag === 0) return new Vector2D(0, 0);
+                return new Vector2D(this.x / mag, this.y / mag);
+            }
+            
+            rotate(angle) {
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                return new Vector2D(
+                    this.x * cos - this.y * sin,
+                    this.x * sin + this.y * cos
+                );
+            }
+        }
+        
+        // Player ship class
+        class Ship {
+            constructor() {
+                this.position = new Vector2D(canvas.width / 2, canvas.height / 2);
+                this.velocity = new Vector2D(0, 0);
+                this.angle = -Math.PI / 2; // Pointing up initially
+                this.radius = 10;
+                this.thrustPower = 0.5;
+                this.rotationSpeed = 0.1;
+                this.isThrusting = false;
+                this.flameAnimation = 0;
+                this.invulnerable = false;
+                this.invulnerableTime = 0;
+            }
+            
+            update() {
+                // Handle rotation
+                if (keys['ArrowLeft']) {
+                    this.angle -= this.rotationSpeed;
+                }
+                if (keys['ArrowRight']) {
+                    this.angle += this.rotationSpeed;
+                }
+                
+                // Handle thrust
+                this.isThrusting = false;
+                if (keys['ArrowUp']) {
+                    const thrust = new Vector2D(
+                        Math.cos(this.angle) * this.thrustPower,
+                        Math.sin(this.angle) * this.thrustPower
+                    );
+                    this.velocity = this.velocity.add(thrust);
+                    this.isThrusting = true;
+                    this.flameAnimation += 0.3;
+                }
+                
+                // Apply friction (space drag)
+                this.velocity = this.velocity.multiply(0.99);
+                
+                // Update position
+                this.position = this.position.add(this.velocity);
+                
+                // Screen wraparound
+                if (this.position.x < 0) this.position.x = canvas.width;
+                if (this.position.x > canvas.width) this.position.x = 0;
+                if (this.position.y < 0) this.position.y = canvas.height;
+                if (this.position.y > canvas.height) this.position.y = 0;
+                
+                // Update invulnerability
+                if (this.invulnerable) {
+                    this.invulnerableTime--;
+                    if (this.invulnerableTime <= 0) {
+                        this.invulnerable = false;
+                    }
+                }
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.translate(this.position.x, this.position.y);
+                ctx.rotate(this.angle);
+                
+                // Flash when invulnerable
+                if (!this.invulnerable || Math.floor(this.invulnerableTime / 5) % 2 === 0) {
+                    // Draw ship triangle
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(15, 0);
+                    ctx.lineTo(-10, -8);
+                    ctx.lineTo(-7, 0);
+                    ctx.lineTo(-10, 8);
+                    ctx.closePath();
+                    ctx.stroke();
+                    
+                    // Draw thrust flame
+                    if (this.isThrusting) {
+                        const flameLength = 15 + Math.sin(this.flameAnimation) * 5;
+                        ctx.strokeStyle = '#ff6600';
+                        ctx.beginPath();
+                        ctx.moveTo(-7, -4);
+                        ctx.lineTo(-flameLength, 0);
+                        ctx.lineTo(-7, 4);
+                        ctx.stroke();
+                        
+                        // Inner flame
+                        ctx.strokeStyle = '#ffff00';
+                        ctx.beginPath();
+                        ctx.moveTo(-7, -2);
+                        ctx.lineTo(-flameLength * 0.6, 0);
+                        ctx.lineTo(-7, 2);
+                        ctx.stroke();
+                    }
+                }
+                
+                ctx.restore();
+            }
+            
+            shoot() {
+                const bulletVelocity = new Vector2D(
+                    Math.cos(this.angle) * 10,
+                    Math.sin(this.angle) * 10
+                );
+                return new Bullet(
+                    this.position.add(new Vector2D(Math.cos(this.angle) * 15, Math.sin(this.angle) * 15)),
+                    bulletVelocity
+                );
+            }
+            
+            reset() {
+                this.position = new Vector2D(canvas.width / 2, canvas.height / 2);
+                this.velocity = new Vector2D(0, 0);
+                this.angle = -Math.PI / 2;
+                this.invulnerable = true;
+                this.invulnerableTime = 120; // 2 seconds at 60fps
+            }
+        }
+        
+        // Bullet class
+        class Bullet {
+            constructor(position, velocity) {
+                this.position = position;
+                this.velocity = velocity;
+                this.lifetime = 40;
+            }
+            
+            update() {
+                this.position = this.position.add(this.velocity);
+                this.lifetime--;
+                
+                // Screen wraparound
+                if (this.position.x < 0) this.position.x = canvas.width;
+                if (this.position.x > canvas.width) this.position.x = 0;
+                if (this.position.y < 0) this.position.y = canvas.height;
+                if (this.position.y > canvas.height) this.position.y = 0;
+            }
+            
+            draw() {
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(this.position.x - 1, this.position.y - 1, 3, 3);
+            }
+        }
+        
+        // Asteroid class
+        class Asteroid {
+            constructor(x, y, size) {
+                this.position = new Vector2D(x || Math.random() * canvas.width, y || Math.random() * canvas.height);
+                this.size = size; // 'large', 'medium', 'small'
+                this.radius = size === 'large' ? 40 : size === 'medium' ? 25 : 15;
+                
+                // Random velocity
+                const speed = size === 'large' ? 1.5 : size === 'medium' ? 2.5 : 3.5;
+                const angle = Math.random() * Math.PI * 2;
+                this.velocity = new Vector2D(Math.cos(angle) * speed, Math.sin(angle) * speed);
+                
+                // Rotation
+                this.rotation = 0;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.05;
+                
+                // Generate irregular shape
+                this.vertices = [];
+                const numVertices = 8 + Math.floor(Math.random() * 4);
+                for (let i = 0; i < numVertices; i++) {
+                    const angle = (i / numVertices) * Math.PI * 2;
+                    const variance = 0.7 + Math.random() * 0.6;
+                    this.vertices.push({
+                        x: Math.cos(angle) * this.radius * variance,
+                        y: Math.sin(angle) * this.radius * variance
+                    });
+                }
+            }
+            
+            update() {
+                this.position = this.position.add(this.velocity);
+                this.rotation += this.rotationSpeed;
+                
+                // Screen wraparound
+                if (this.position.x < -this.radius) this.position.x = canvas.width + this.radius;
+                if (this.position.x > canvas.width + this.radius) this.position.x = -this.radius;
+                if (this.position.y < -this.radius) this.position.y = canvas.height + this.radius;
+                if (this.position.y > canvas.height + this.radius) this.position.y = -this.radius;
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.translate(this.position.x, this.position.y);
+                ctx.rotate(this.rotation);
+                
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                
+                for (let i = 0; i < this.vertices.length; i++) {
+                    const v = this.vertices[i];
+                    if (i === 0) {
+                        ctx.moveTo(v.x, v.y);
+                    } else {
+                        ctx.lineTo(v.x, v.y);
+                    }
+                }
+                
+                ctx.closePath();
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+            
+            split() {
+                const fragments = [];
+                if (this.size === 'large') {
+                    for (let i = 0; i < 2; i++) {
+                        fragments.push(new Asteroid(this.position.x, this.position.y, 'medium'));
+                    }
+                    score += 20;
+                } else if (this.size === 'medium') {
+                    for (let i = 0; i < 2; i++) {
+                        fragments.push(new Asteroid(this.position.x, this.position.y, 'small'));
+                    }
+                    score += 50;
+                } else {
+                    score += 100;
+                }
+                
+                // Check for extra life
+                if (score >= 10000 && lives === Math.floor(score / 10000)) {
+                    lives++;
+                    console.log('Extra life earned!');
+                }
+                
+                updateScore();
+                return fragments;
+            }
+        }
+        
+        // UFO class
+        class UFO {
+            constructor(size) {
+                this.size = size; // 'large' or 'small'
+                this.radius = size === 'large' ? 20 : 10;
+                
+                // Spawn from random edge
+                const edge = Math.floor(Math.random() * 4);
+                switch(edge) {
+                    case 0: // Top
+                        this.position = new Vector2D(Math.random() * canvas.width, -this.radius);
+                        break;
+                    case 1: // Right
+                        this.position = new Vector2D(canvas.width + this.radius, Math.random() * canvas.height);
+                        break;
+                    case 2: // Bottom
+                        this.position = new Vector2D(Math.random() * canvas.width, canvas.height + this.radius);
+                        break;
+                    case 3: // Left
+                        this.position = new Vector2D(-this.radius, Math.random() * canvas.height);
+                        break;
+                }
+                
+                // Movement towards center with some randomness
+                const targetX = canvas.width / 2 + (Math.random() - 0.5) * 200;
+                const targetY = canvas.height / 2 + (Math.random() - 0.5) * 200;
+                const direction = new Vector2D(targetX - this.position.x, targetY - this.position.y).normalize();
+                
+                const speed = size === 'large' ? 1 : 2;
+                this.velocity = direction.multiply(speed);
+                
+                // Shooting
+                this.shootCooldown = 0;
+                this.shootInterval = size === 'large' ? 120 : 60; // Large shoots slower
+                
+                // Animation
+                this.animationTime = 0;
+            }
+            
+            update() {
+                this.position = this.position.add(this.velocity);
+                this.animationTime += 0.1;
+                
+                // Add some wobble to movement
+                const wobble = Math.sin(this.animationTime) * 0.5;
+                this.velocity.y += wobble * 0.01;
+                
+                // Remove if off screen
+                if (this.position.x < -50 || this.position.x > canvas.width + 50 ||
+                    this.position.y < -50 || this.position.y > canvas.height + 50) {
+                    return false;
+                }
+                
+                // Shooting logic
+                this.shootCooldown--;
+                if (this.shootCooldown <= 0) {
+                    this.shoot();
+                    this.shootCooldown = this.shootInterval + Math.random() * 60;
+                }
+                
+                return true;
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.translate(this.position.x, this.position.y);
+                
+                // Draw UFO shape
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                
+                // Main body (ellipse)
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.radius * 1.5, this.radius * 0.7, 0, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Dome
+                ctx.beginPath();
+                ctx.arc(0, -this.radius * 0.3, this.radius * 0.5, 0, Math.PI);
+                ctx.stroke();
+                
+                // Lights (animated)
+                const lightPhase = Math.sin(this.animationTime * 2) > 0;
+                ctx.fillStyle = lightPhase ? '#fff' : '#000';
+                for (let i = -1; i <= 1; i++) {
+                    ctx.beginPath();
+                    ctx.arc(i * this.radius * 0.5, 0, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                ctx.restore();
+            }
+            
+            shoot() {
+                if (!ship) return;
+                
+                let bulletVelocity;
+                
+                if (this.size === 'large') {
+                    // Random shooting
+                    const angle = Math.random() * Math.PI * 2;
+                    bulletVelocity = new Vector2D(Math.cos(angle) * 5, Math.sin(angle) * 5);
+                } else {
+                    // Aim at player
+                    const direction = ship.position.subtract(this.position).normalize();
+                    bulletVelocity = direction.multiply(7);
+                }
+                
+                bullets.push(new Bullet(this.position, bulletVelocity));
+            }
+            
+            destroy() {
+                score += this.size === 'large' ? 200 : 1000;
+                updateScore();
+            }
+        }
+        
+        // Particle effect for explosions
+        class Particle {
+            constructor(x, y) {
+                this.position = new Vector2D(x, y);
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 5 + 2;
+                this.velocity = new Vector2D(Math.cos(angle) * speed, Math.sin(angle) * speed);
+                this.lifetime = 20;
+            }
+            
+            update() {
+                this.position = this.position.add(this.velocity);
+                this.velocity = this.velocity.multiply(0.95);
+                this.lifetime--;
+            }
+            
+            draw() {
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(this.position.x - 1, this.position.y - 1, 2, 2);
+            }
+        }
+        
+        // Game objects
+        let ship;
+        let asteroids = [];
+        let bullets = [];
+        let ufos = [];
+        let particles = [];
+        let lastShotTime = 0;
+        let ufoSpawnTimer = 0;
+        
+        // Initialize game
+        function initGame() {
+            ship = new Ship();
+            asteroids = [];
+            bullets = [];
+            ufos = [];
+            particles = [];
+            
+            // Create initial asteroids (4 large)
+            for (let i = 0; i < 4; i++) {
+                let x, y;
+                do {
+                    x = Math.random() * canvas.width;
+                    y = Math.random() * canvas.height;
+                } while (new Vector2D(x - ship.position.x, y - ship.position.y).magnitude() < 100);
+                
+                asteroids.push(new Asteroid(x, y, 'large'));
+            }
+            
+            console.log('Game initialized with', asteroids.length, 'asteroids');
+        }
+        
+        // Update score display
+        function updateScore() {
+            document.getElementById('score').textContent = score;
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('asteroidsHighScore', highScore);
+                document.getElementById('highScore').textContent = highScore;
+            }
+        }
+        
+        // Update lives display
+        function updateLives() {
+            document.getElementById('lives').textContent = lives;
+        }
+        
+        // Check collision between two circles
+        function checkCollision(obj1, obj2) {
+            const distance = obj1.position.subtract(obj2.position).magnitude();
+            return distance < (obj1.radius || 5) + (obj2.radius || 5);
+        }
+        
+        // Create explosion effect
+        function createExplosion(x, y) {
+            for (let i = 0; i < 10; i++) {
+                particles.push(new Particle(x, y));
+            }
+        }
+        
+        // Game loop
+        function gameLoop() {
+            if (!gameRunning || isPaused) {
+                requestAnimationFrame(gameLoop);
+                return;
+            }
+            
+            // Clear canvas
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Update and draw ship
+            if (ship) {
+                ship.update();
+                ship.draw();
+                
+                // Handle shooting
+                if (keys[' '] && Date.now() - lastShotTime > 250) {
+                    bullets.push(ship.shoot());
+                    lastShotTime = Date.now();
+                }
+            }
+            
+            // Update and draw asteroids
+            for (let i = asteroids.length - 1; i >= 0; i--) {
+                const asteroid = asteroids[i];
+                asteroid.update();
+                asteroid.draw();
+                
+                // Check collision with ship
+                if (ship && !ship.invulnerable && checkCollision(ship, asteroid)) {
+                    createExplosion(ship.position.x, ship.position.y);
+                    lives--;
+                    updateLives();
+                    
+                    if (lives <= 0) {
+                        gameOver();
+                    } else {
+                        ship.reset();
+                    }
+                }
+                
+                // Check collision with bullets
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    const bullet = bullets[j];
+                    if (checkCollision(bullet, asteroid)) {
+                        createExplosion(asteroid.position.x, asteroid.position.y);
+                        const fragments = asteroid.split();
+                        asteroids.splice(i, 1);
+                        asteroids.push(...fragments);
+                        bullets.splice(j, 1);
+                        break;
+                    }
+                }
+            }
+            
+            // Update and draw UFOs
+            ufoSpawnTimer++;
+            if (ufoSpawnTimer > 600 + Math.random() * 300) { // Spawn every 10-15 seconds
+                const size = Math.random() < 0.7 ? 'large' : 'small';
+                ufos.push(new UFO(size));
+                ufoSpawnTimer = 0;
+                console.log('UFO spawned:', size);
+            }
+            
+            for (let i = ufos.length - 1; i >= 0; i--) {
+                const ufo = ufos[i];
+                if (!ufo.update()) {
+                    ufos.splice(i, 1);
+                    continue;
+                }
+                ufo.draw();
+                
+                // Check collision with ship
+                if (ship && !ship.invulnerable && checkCollision(ship, ufo)) {
+                    createExplosion(ufo.position.x, ufo.position.y);
+                    ufo.destroy();
+                    ufos.splice(i, 1);
+                    
+                    lives--;
+                    updateLives();
+                    
+                    if (lives <= 0) {
+                        gameOver();
+                    } else {
+                        ship.reset();
+                    }
+                }
+                
+                // Check collision with bullets
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    const bullet = bullets[j];
+                    if (checkCollision(bullet, ufo)) {
+                        createExplosion(ufo.position.x, ufo.position.y);
+                        ufo.destroy();
+                        ufos.splice(i, 1);
+                        bullets.splice(j, 1);
+                        break;
+                    }
+                }
+            }
+            
+            // Update and draw bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.update();
+                
+                if (bullet.lifetime <= 0) {
+                    bullets.splice(i, 1);
+                } else {
+                    bullet.draw();
+                }
+            }
+            
+            // Update and draw particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                particle.update();
+                
+                if (particle.lifetime <= 0) {
+                    particles.splice(i, 1);
+                } else {
+                    particle.draw();
+                }
+            }
+            
+            // Check for level completion
+            if (asteroids.length === 0 && ufos.length === 0) {
+                nextLevel();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Next level
+        function nextLevel() {
+            level++;
+            console.log('Level', level, 'starting!');
+            
+            // Add more asteroids each level
+            const numAsteroids = Math.min(4 + level - 1, 11);
+            for (let i = 0; i < numAsteroids; i++) {
+                let x, y;
+                do {
+                    x = Math.random() * canvas.width;
+                    y = Math.random() * canvas.height;
+                } while (new Vector2D(x - ship.position.x, y - ship.position.y).magnitude() < 150);
+                
+                asteroids.push(new Asteroid(x, y, 'large'));
+            }
+        }
+        
+        // Game over
+        function gameOver() {
+            gameRunning = false;
+            document.getElementById('gameOver').style.display = 'block';
+            console.log('Game Over! Final score:', score);
+        }
+        
+        // Reset game
+        function resetGame() {
+            score = 0;
+            lives = 3;
+            level = 1;
+            gameRunning = true;
+            isPaused = false;
+            
+            updateScore();
+            updateLives();
+            document.getElementById('gameOver').style.display = 'none';
+            
+            initGame();
+        }
+        
+        // Start the game
+        initGame();
+        gameLoop();
+    </script>
+</body>
+</html>

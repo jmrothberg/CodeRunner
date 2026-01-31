@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vector Defender: Earth Rescue</title>
+    <style>
+        :root {
+            --neon-green: #39ff14;
+            --neon-red: #ff073a;
+            --neon-blue: #00fff2;
+            --neon-yellow: #ffee00;
+            --bg-color: #050505;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            font-family: 'Courier New', Courier, monospace;
+            color: white;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            box-shadow: 0 0 20px rgba(57, 255, 20, 0.2);
+            border: 1px solid #333;
+        }
+
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0 0 5px var(--neon-green);
+        }
+
+        .hud-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+
+        .bomb-indicator {
+            color: var(--neon-yellow);
+            font-size: 20px;
+        }
+
+        /* Start / Game Over Screen */
+        #overlay-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto;
+            z-index: 10;
+        }
+
+        h1 {
+            font-size: 60px;
+            margin: 0 0 20px 0;
+            color: var(--neon-green);
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            text-shadow: 4px 4px 0px var(--neon-red);
+            animation: pulse 2s infinite;
+        }
+
+        p {
+            font-size: 18px;
+            line-height: 1.6;
+            max-width: 600px;
+            text-align: center;
+            color: #ddd;
+        }
+
+        .controls-info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid var(--neon-blue);
+        }
+
+        button {
+            background: transparent;
+            color: var(--neon-green);
+            border: 2px solid var(--neon-green);
+            padding: 15px 40px;
+            font-size: 24px;
+            cursor: pointer;
+            text-transform: uppercase;
+            font-family: inherit;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            background: var(--neon-green);
+            color: black;
+            box-shadow: 0 0 20px var(--neon-green);
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); text-shadow: 4px 4px 0px var(--neon-red); }
+            50% { transform: scale(1.05); text-shadow: 6px 6px 10px var(--neon-red), 0 0 20px var(--neon-green); }
+            100% { transform: scale(1); text-shadow: 4px 4px 0px var(--neon-red); }
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div id="scoreDisplay">SCORE: 00000</div>
+            <div id="waveDisplay">WAVE: 1</div>
+        </div>
+        <div class="hud-bottom">
+            <div id="livesDisplay" style="color: var(--neon-red)">SHIPS: 3</div>
+            <div id="smartBombs" class="bomb-indicator">SMART BOMBS: [|||||]</div>
+        </div>
+    </div>
+
+    <div id="overlay-screen">
+        <h1>Vector Defender</h1>
+        <div class="controls-info">
+            <p><strong>MISSION:</strong> Defend the humanoids from alien abduction.</p>
+            <p>⬅️ ➡️ Arrow Keys to Move<br>
+               ⬆️ ⬇️ Arrow Keys to Change Altitude<br>
+               SPACE to Fire Laser<br>
+               B or SHIFT for Smart Bomb</p>
+        </div>
+        <button id="startBtn">Start Mission</button>
+    </div>
+</div>
+
+<script>
+/**
+ * Vector Defender
+ * A tribute to classic arcade shooters.
+ */
+
+// --- Configuration & Constants ---
+const CONFIG = {
+    FPS: 60,
+    WORLD_WIDTH: 4000, // The total width of the level (scrolling)
+    VIEWPORT_PADDING: 200,
+    STAR_COUNT: 150,
+    TERRAIN_SEGMENTS: 100,
+    COLORS: {
+        PLAYER: '#39ff14', // Neon Green
+        HUMANOID: '#ffffff',
+        LANDER: '#ff00ff', // Magenta
+        MUTANT: '#ff4400', // Orange/Red
+        BULLET: '#ffff00', // Yellow
+        BOMB_EXPLOSION: '#00fff2', // Cyan
+        TERRAIN: '#4444ff'
+    }
+};
+
+// --- Game State Management ---
+const state = {
+    canvas: null,
+    ctx: null,
+    width: 0,
+    height: 0,
+    lastTime: 0,
+    
+    // Gameplay State
+    isRunning: false,
+    score: 0,
+    lives: 3,
+    wave: 1,
+    smartBombs: 5,
+    cameraX: 0,
+    
+    // Entities
+    player: null,
+    humanoids: [],
+    enemies: [], // Landers, Mutants, Bombers (simplified to Landers/Mutants for this scope)
+    bullets: [],
+    particles: [],
+    terrainPoints: [],
+    stars: []
+};
+
+// --- Input Handling ---
+const keys = {
+    ArrowUp: false,
+    ArrowDown: false,
+    ArrowLeft: false,
+    ArrowRight: false,
+    Space: false,
+    KeyB: false,
+    ShiftLeft: false
+};
+
+window.addEventListener('keydown', (e) => {
+    if(e.code === 'Space') e.preventDefault(); // Prevent scrolling
+    if(keys.hasOwnProperty(e.code)) keys[e.code] = true;
+});
+
+window.addEventListener('keyup', (e) => {
+    if(keys.hasOwnProperty(e.code)) keys[e.code] = false;
+    
+    // Handle single press actions
+    if (state.isRunning) {
+        if (e.code === 'Space') fireBullet();
+        if (e.code === 'KeyB' || e.code === 'ShiftLeft') detonateSmartBomb();
+    }
+});
+
+// --- Initialization ---
+function init() {
+    state.canvas = document.getElementById('gameCanvas');
+    state.ctx = state.canvas.getContext('2d', { alpha: false }); // Optimize for no transparency on base
+    
+    resize();
+    window.addEventListener('resize', resize);
+    
+    document.getElementById('startBtn').addEventListener('click', startGame);
+
+    // Generate background stars
+    generateStars();
+    
+    console.log("Vector Defender initialized.");
+}
+
+function resize() {
+    state.width = window.innerWidth;
+    state.height = window.innerHeight;
+    state.canvas.width = state.width;
+    state.canvas.height = state.height;
+}
+
+function startGame() {
+    document.getElementById('overlay-screen').classList.add('hidden');
+    
+    // Reset State
+    state.score = 0;
+    state.lives = 3;
+    state.wave = 1;
+    state.smartBombs = 5;
+    state.bullets = [];
+    state.particles = [];
+    
+    generateTerrain();
+    spawnPlayer();
+    spawnWave();
+    
+    updateHUD();
+    state.isRunning = true;
+    requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+    state.isRunning = false;
+    document.querySelector('#overlay-screen h1').innerText = "GAME OVER";
+    document.querySelector('#overlay-screen p').innerHTML = `Final Score: ${state.score}<br>The aliens have conquered the surface.`;
+    document.getElementById('startBtn').innerText = "Try Again";
+    document.getElementById('overlay-screen').classList.remove('hidden');
+}
+
+function nextWave() {
+    state.wave++;
+    state.smartBombs = Math.min(state.smartBombs + 2, 9); // Replenish bombs
+    spawnWave();
+    updateHUD();
+    
+    // Visual feedback for wave start
+    createExplosion(state.player.x, state.player.y, CONFIG.COLORS.PLAYER, 50, false);
+}
+
+// --- World Generation ---
+
+function generateStars() {
+    state.stars = [];
+    for(let i=0; i<CONFIG.STAR_COUNT; i++) {
+        state.stars.push({
+            x: Math.random() * CONFIG.WORLD_WIDTH,
+            y: Math.random() * window.innerHeight, // Parallax will be simple here
+            size: Math.random() * 2,
+            speed: Math.random() * 0.5 + 0.1
+        });
+    }
+}
+
+function generateTerrain() {
+    state.terrainPoints = [];
+    const segmentWidth = CONFIG.WORLD_WIDTH / CONFIG.TERRAIN_SEGMENTS;
+    
+    // Start flat
+    let y = state.height - 100;
+    
+    for(let i=0; i <= CONFIG.TERRAIN_SEGMENTS; i++) {
+        // Random height variation but keep it playable
+        let change = (Math.random() - 0.5) * 150;
+        y += change;
+        
+        // Clamp Y
+        if(y < state.height * 0.4) y = state.height * 0.4;
+        if(y > state.height - 20) y = state.height - 20;
+        
+        state.terrainPoints.push({
+            x: i * segmentWidth,
+            y: y
+        });
+    }
+}
+
+function spawnPlayer() {
+    state.player = {
+        x: CONFIG.WORLD_WIDTH / 2,
+        y: state.height / 3,
+        width: 40,
+        height: 20,
+        vx: 0,
+        vy: 0,
+        speed: 8,
+        friction: 0.92,
+        invincible: 0
+    };
+}
+
+function spawnHumanoids() {
+    state.humanoids = [];
+    const count = 5 + Math.floor(state.wave / 2); // More humanoids in later waves
+    
+    for(let i=0; i<count; i++) {
+        // Find a random spot on the terrain
+        let segmentIndex = Math.floor(Math.random() * (CONFIG.TERRAIN_SEGMENTS - 1)) + 1;
+        // Ensure they aren't too close to edges
+        if(segmentIndex < 2) segmentIndex = 2;
+        
+        const point = state.terrainPoints[segmentIndex];
+        
+        state.humanoids.push({
+            id: i,
+            active: true, // FIX: Added missing property
+            x: point.x,
+            y: point.y - 10, // Standing on line
+            width: 10,
+            height: 20,
+            vx: (Math.random() > 0.5 ? 1 : -1) * (Math.random() * 0.5 + 0.2),
+            isCaptured: false,
+            captorId: null, // ID of the lander capturing this humanoid
+            falling: false
+        });
+    }
+}
+
+function spawnWave() {
+    state.enemies = [];
+    spawnHumanoids();
+    
+    const landerCount = 3 + Math.floor(state.wave * 1.5);
+    
+    for(let i=0; i<landerCount; i++) {
+        spawnEnemy('Lander');
+    }
+}
+
+function spawnEnemy(type) {
+    // Spawn away from player
+    let ex, ey;
+    const buffer = 400;
+    
+    if(Math.random() > 0.5) {
+        ex = state.player.x + (Math.random() * CONFIG.WORLD_WIDTH/2); 
+    } else {
+        ex = state.player.x - (Math.random() * CONFIG.WORLD_WIDTH/2);
+    }
+    
+    // Wrap around world
+    if(ex < 0) ex += CONFIG.WORLD_WIDTH;
+    if(ex > CONFIG.WORLD_WIDTH) ex -= CONFIG.WORLD_WIDTH;
+    
+    ey = Math.random() * (state.height / 2);
+
+    const enemy = {
+        id: Math.random().toString(36).substr(2, 9),
+        active: true, // FIX: Added missing property
+        type: type,
+        x: ex,
+        y: ey,
+        width: 30,
+        height: 25,
+        vx: 0,
+        vy: 0,
+        timer: Math.random() * 100, // For AI behavior
+        state: 'HUNTING', // HUNTING, ABDUCTING, MUTATING
+        targetId: null
+    };
+    
+    state.enemies.push(enemy);
+}
+
+// --- Game Loop ---
+
+function gameLoop(timestamp) {
+    if (!state.isRunning) return;
+
+    const dt = timestamp - state.lastTime;
+    state.lastTime = timestamp;
+
+    update(dt);
+    draw();
+
+    requestAnimationFrame(gameLoop);
+}
+
+function update(dt) {
+    // Clamp dt to prevent huge jumps if tab is inactive
+    if(dt > 100) dt = 16; 
+
+    updatePlayer();
+    updateBullets();
+    updateHumanoids();
+    updateEnemies();
+    updateParticles();
+    
+    checkCollisions();
+    checkGameStatus();
+}
+
+function checkGameStatus() {
+    // Check if all humanoids dead
+    const allDead = state.humanoids.every(h => !h.active);
+    if(allDead && state.humanoids.length > 0) {
+        // Usually this triggers a "Planet Surface Uninhabitable" logic, 
+        // but for this version we just spawn next wave immediately or game over?
+        // Let's make it Game Over if all die.
+        gameOver();
+        return;
+    }
+
+    // Check Wave Clear
+    const activeEnemies = state.enemies.filter(e => e.active);
+    if(activeEnemies.length === 0) {
+        nextWave();
+    }
+}
+
+// --- Updates ---
+
+function updatePlayer() {
+    const p = state.player;
+    
+    // Movement Input
+    if(keys.ArrowLeft) p.vx -= 1;
+    if(keys.ArrowRight) p.vx += 1;
+    if(keys.ArrowUp) p.vy -= 0.5;
+    if(keys.ArrowDown) p.vy += 0.5;
+
+    // Physics
+    p.x += p.vx * p.speed;
+    p.y += p.vy * p.speed;
+    
+    // Friction
+    p.vx *= p.friction;
+    p.vy *= p.friction;
+
+    // Bounds (Vertical)
+    if(p.y < 20) { p.y = 20; p.vy = 0; }
+    if(p.y > state.height - 40) { p.y = state.height - 40; p.vy = 0; }
+
+    // Wrap World (Horizontal)
+    if(p.x < 0) p.x += CONFIG.WORLD_WIDTH;
+    if(p.x > CONFIG.WORLD_WIDTH) p.x -= CONFIG.WORLD_WIDTH;
+
+    // Camera Follow
+    // Target camera X is player X centered
+    let targetCamX = p.x - state.width / 2;
+    
+    // Smooth camera
+    state.cameraX += (targetCamX - state.cameraX) * 0.1;
+    
+    // Clamp Camera
+    if(state.cameraX < -CONFIG.VIEWPORT_PADDING) state.cameraX = -CONFIG.VIEWPORT_PADDING;
+    if(state.cameraX > CONFIG.WORLD_WIDTH - state.width + CONFIG.VIEWPORT_PADDING) 
+        state.cameraX = CONFIG.WORLD_WIDTH - state.width + CONFIG.VIEWPORT_PADDING;
+
+    // Invincibility frame decrease
+    if(p.invincible > 0) p.invincible--;
+}
+
+function updateBullets() {
+    for (let i = state.bullets.length - 1; i >= 0; i--) {
+        const b = state.bullets[i];
+        
+        if(b.type === 'PLAYER') {
+            b.x += b.vx;
+            b.y += b.vy;
+            
+            // Remove if out of bounds
+            if (b.x < state.cameraX || b.x > state.cameraX + state.width || 
+                b.y < 0 || b.y > state.height) {
+                state.bullets.splice(i, 1);
+            }
+        } else if (b.type === 'ENEMY') {
+             // Simple enemy bullet logic
+             const dx = state.player.x - b.x;
+             const dy = state.player.y - b.y;
+             const dist = Math.sqrt(dx*dx + dy*dy);
+             
+             b.vx = (dx/dist) * 6; // Speed of enemy bullet
+             b.vy = (dy/dist) * 6;
+             
+             b.x += b.vx;
+             b.y += b.vy;
+             
+             if(b.x < state.cameraX - 100 || b.x > state.cameraX + state.width + 100 ||
+                b.y < -100 || b.y > state.height + 100) {
+                 state.bullets.splice(i, 1);
+             }
+        }
+    }
+}
+
+function updateHumanoids() {
+    for (let i = state.humanoids.length - 1; i >= 0; i--) {
+        const h = state.humanoids[i];
+        
+        // Deactivate dead ones
+        if(!h.active) continue;
+
+        if(h.isCaptured) {
+            // Logic handled by Enemy (Lander)
+            continue;
+        }
+
+        if(h.falling) {
+            h.y += 5; // Fall speed
+            h.vx = 0;
+            
+            // Terrain collision check for falling humanoid
+            const groundY = getTerrainHeightAt(h.x);
+            if(h.y >= groundY - 10) {
+                h.y = groundY - 10;
+                h.falling = false;
+                // Safe landing!
+                // Particle effect?
+            }
+        } else {
+            // Walking logic
+            h.x += h.vx;
+            
+            // Check terrain height to walk on it
+            const groundY = getTerrainHeightAt(h.x);
+            h.y = groundY - 10;
+
+            // Turn around at world edges or random chance
+            if(Math.random() < 0.01) h.vx *= -1;
+            
+            // Keep within world bounds roughly
+            if(h.x < 50) h.vx = Math.abs(h.vx);
+            if(h.x > CONFIG.WORLD_WIDTH - 50) h.vx = -Math.abs(h.vx);
+        }
+    }
+}
+
+function updateEnemies() {
+    state.enemies.forEach(e => {
+        if(!e.active) return;
+
+        e.timer++;
+
+        // AI Logic based on type
+        if(e.type === 'Lander') {
+            updateLanderAI(e);
+        } else if (e.type === 'Mutant') {
+            updateMutantAI(e);
+        }
+        
+        // Keep in world bounds vertically
+        if(e.y < 20) e.vy += 0.5;
+        if(e.y > state.height - 50) e.vy -= 0.5;
+    });
+}
+
+function updateLanderAI(e) {
+    const p = state.player;
+    
+    // Find nearest humanoid
+    let target = null;
+    let minDist = Infinity;
+    
+    state.humanoids.forEach(h => {
+        if(!h.active || h.isCaptured) return;
+        
+        // Account for world wrap distance? Keeping simple Euclidean for now, 
+        // but landers should be smart.
+        const d = Math.abs(h.x - e.x);
+        if(d < minDist) {
+            minDist = d;
+            target = h;
+        }
+    });
+
+    // State Machine
+    if (e.state === 'HUNTING') {
+        // Move towards a humanoid randomly or the closest one
+        if(target && minDist < 800) {
+             e.targetId = target.id; // Lock on
+            
+            // Move towards humanoid X
+            const dx = target.x - e.x;
+            const vx = Math.sign(dx) * 2;
+            
+            // Move towards humanoid Y (descend)
+            let vy = (target.y - e.y) * 0.05;
+            
+            e.vx = vx;
+            e.vy = vy;
+
+            // If close enough, grab
+            if(minDist < 20 && Math.abs(target.y - e.y) < 30) {
+                e.state = 'ABDUCTING';
+                target.isCaptured = true;
+                // Sound effect placeholder: playSound('capture');
+            }
+        } else {
+            // Wander / Attack Player
+            const dx = p.x - e.x;
+            const dy = p.y - e.y;
+            
+            e.vx += (Math.sign(dx) * 0.1);
+            e.vy += (Math.sign(dy) * 0.1);
+            
+            // Friction/limit speed
+            if(e.vx > 3) e.vx = 3; if(e.vx < -3) e.vx = -3;
+            if(e.vy > 3) e.vy = 3; if(e.vy < -3) e.vy = -3;
+            
+            // Shoot randomly at player
+            if(Math.random() < 0.005) {
+                fireEnemyBullet(e);
+            }
+        }
+    } 
+    else if (e.state === 'ABDUCTING') {
+        const h = state.humanoids.find(hum => hum.id === e.targetId);
+        
+        if(h && h.active) {
+            // Move humanoid with lander
+            h.x = e.x;
+            h.y = e.y + 15;
+            
+            // Fly up
+            e.vy = -2; 
+            e.vx = (Math.random() - 0.5); // Jitter
+            
+            // If reaches top, mutate!
+            if(e.y < 50) {
+                h.active = false; // Humanoid consumed
+                mutateLander(e);
+            }
+        } else {
+            // Humanoid died while captured? Go back to hunting
+            e.state = 'HUNTING';
+            e.targetId = null;
+        }
+    }
+    
+    // Wrap world for enemies too so they don't disappear
+    if(e.x < 0) e.x += CONFIG.WORLD_WIDTH;
+    if(e.x > CONFIG.WORLD_WIDTH) e.x -= CONFIG.WORLD_WIDTH;
+
+    e.x += e.vx;
+    e.y += e.vy;
+}
+
+function updateMutantAI(e) {
+    const p = state.player;
+    
+    // Mutants are aggressive and fast. They swarm the player.
+    const dx = p.x - e.x;
+    const dy = p.y - e.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    
+    if(dist > 0) {
+        e.vx += (dx/dist) * 0.2;
+        e.vy += (dy/dist) * 0.2;
+    }
+    
+    // Cap speed
+    const speed = Math.sqrt(e.vx*e.vx + e.vy*e.vy);
+    if(speed > 5) {
+        e.vx = (e.vx/speed) * 5;
+        e.vy = (e.vy/speed) * 5;
+    }
+
+    // Shoot often
+    if(Math.random() < 0.02) {
+        fireEnemyBullet(e);
+    }
+    
+    e.x += e.vx;
+    e.y += e.vy;
+}
+
+function mutateLander(lander) {
+    lander.type = 'Mutant';
+    lander.state = 'HUNTING'; // Mutants just hunt
+    lander.targetId = null;
+    lander.width = 35;
+    lander.height = 30;
+    
+    // Visual flare
+    createExplosion(lander.x, lander.y, CONFIG.COLORS.MUTANT, 20);
+    console.log("Lander mutated at", lander.x, lander.y);
+}
+
+function updateParticles() {
+    for(let i=state.particles.length-1; i>=0; i--) {
+        const p = state.particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= p.decay;
+        
+        if(p.life <= 0) {
+            state.particles.splice(i, 1);
+        }
+    }
+}
+
+// --- Actions ---
+
+function fireBullet() {
+    if(!state.player || state.lives <= 0) return;
+    
+    // Limit fire rate slightly
+    const now = Date.now();
+    if(state.lastShot && now - state.lastShot < 150) return; 
+    state.lastShot = now;
+
+    // Direction: Upwards or where ship is facing? 
+    // Classic Defender fires 'up' relative to screen, but ship can flip.
+    // Simplified: Fires UP (-Y).
+    
+    state.bullets.push({
+        x: state.player.x,
+        y: state.player.y - 15,
+        vx: state.player.vx * 0.5, // Inherit slight momentum
+        vy: -12,
+        type: 'PLAYER',
+        width: 4,
+        height: 10
+    });
+    
+    // Sound placeholder: playSound('laser');
+}
+
+function fireEnemyBullet(enemy) {
+    state.bullets.push({
+        x: enemy.x,
+        y: enemy.y + 10,
+        vx: 0, 
+        vy: 0,
+        type: 'ENEMY',
+        width: 4,
+        height: 4
+    });
+}
+
+function detonateSmartBomb() {
+    if(state.smartBombs <= 0) return;
+    
+    // Check if there are enemies on screen to use it
+    const enemiesOnScreen = state.enemies.filter(e => 
+        e.active && 
+        e.x > state.cameraX && 
+        e.x < state.cameraX + state.width
+    );
+    
+    if(enemiesOnScreen.length === 0) return; // Don't waste if no target
+    
+    state.smartBombs--;
+    updateHUD();
+    
+    // Kill all enemies on screen
+    state.enemies.forEach(e => {
+        if(!e.active) return;
+        
+        // Screen bounds check with slight padding
+        if(e.x > state.cameraX - 50 && e.x < state.cameraX + state.width + 50) {
+            destroyEnemy(e, true); // True = smart bomb kill (more points?)
+            
+            // If enemy was carrying humanoid, release it
+            if(e.type === 'Lander' && e.state === 'ABDUCTING') {
+                const h = state.humanoids.find(hum => hum.id === e.targetId);
+                if(h) {
+                    h.isCaptured = false;
+                    h.falling = true; // Fall to ground
+                }
+            }
+        }
+    });
+    
+    // Visual Effect: Flash screen or big lines
+    createExplosion(state.cameraX + state.width/2, state.height/2, CONFIG.COLORS.BOMB_EXPLOSION, 100, true);
+}
+
+function destroyEnemy(enemy, isBomb) {
+    enemy.active = false;
+    createExplosion(enemy.x, enemy.y, enemy.type === 'Mutant' ? CONFIG.COLORS.MUTANT : CONFIG.COLORS.LANDER);
+    
+    // Score
+    const points = enemy.type === 'Mutant' ? 200 : 150;
+    state.score += isBomb ? points/2 : points;
+    updateHUD();
+}
+
+function playerHit() {
+    if(state.player.invincible > 0) return;
+    
+    state.lives--;
+    updateHUD();
+    
+    createExplosion(state.player.x, state.player.y, CONFIG.COLORS.PLAYER, 50);
+    
+    if(state.lives <= 0) {
+        gameOver();
+    } else {
+        // Respawn / Reset position slightly
+        state.player.invincible = 120; // 2 seconds at 60fps
+        // Optional: Move player to safe spot? Just leave them there with blink.
+    }
+}
+
+// --- Physics & Collisions ---
+
+function getTerrainHeightAt(x) {
+    // Find segment
+    const segmentWidth = CONFIG.WORLD_WIDTH / CONFIG.TERRAIN_SEGMENTS;
+    const index = Math.floor(x / segmentWidth);
+    
+    if(index >= 0 && index < state.terrainPoints.length - 1) {
+        const p1 = state.terrainPoints[index];
+        const p2 = state.terrainPoints[index+1];
+        
+        // Linear interpolation
+        const t = (x - p1.x) / segmentWidth;
+        return p1.y + (p2.y - p1.y) * t;
+    }
+    
+    return state.height; // Fallback
+}
+
+function checkCollisions() {
+    const p = state.player;
+
+    // 1. Player Bullets hitting Enemies
+    for(let i=state.bullets.length-1; i>=0; i--) {
+        const b = state.bullets[i];
+        if(b.type !== 'PLAYER') continue;
+        
+        for(let e of state.enemies) {
+            if(!e.active) continue;
+            
+            // Simple box collision
+            if(Math.abs(b.x - e.x) < e.width/2 + 5 && Math.abs(b.y - e.y) < e.height/2 + 5) {
+                // Hit!
+                
+                // Special case: Landers carrying humanoids
+                let humanoidSaved = false;
+                if(e.type === 'Lander' && e.state === 'ABDUCTING') {
+                    const h = state.humanoids.find(hum => hum.id === e.targetId);
+                    if(h) {
+                        h.isCaptured = false;
+                        h.falling = true; // Falls to safety
+                        humanoidSaved = true;
+                        state.score += 500; // Big bonus for save
+                    }
+                }
+                
+                destroyEnemy(e, false);
+                state.bullets.splice(i, 1); // Remove bullet
+                
+                if(humanoidSaved) updateHUD();
+                break; // Bullet hit one enemy only
+            }
+        }
+        
+        // Bullets hitting terrain? (Optional, adds strategy)
+        const groundY = getTerrainHeightAt(b.x);
+        if(b.y >= groundY) {
+             createExplosion(b.x, b.y, '#fff', 5); // Small spark
+             state.bullets.splice(i, 1);
+        }
+    }
+
+    // 2. Enemy Bullets / Bodies hitting Player
+    if(p.invincible <= 0) {
+        // Check enemy bullets
+        for(let i=state.bullets.length-1; i>=0; i--) {
+            const b = state.bullets[i];
+            if(b.type !== 'ENEMY') continue;
+            
+            if(Math.abs(b.x - p.x) < p.width/2 && Math.abs(b.y - p.y) < p.height/2) {
+                playerHit();
+                state.bullets.splice(i, 1);
+                break;
+            }
+        }
+        
+        // Check enemy bodies (crashing into enemies)
+        for(let e of state.enemies) {
+            if(!e.active) continue;
+            if(Math.abs(e.x - p.x) < (e.width + p.width)/2 && Math.abs(e.y - p.y) < (e.height + p.height)/2) {
+                playerHit();
+                destroyEnemy(e, false); // Enemy dies too
+                break;
+            }
+        }
+    }
+    
+    // 3. Player catching falling humanoids
+    for(let h of state.humanoids) {
+        if(!h.active || !h.falling) continue;
+        
+        // Check collision with player ship
+        if(Math.abs(h.x - p.x) < p.width && Math.abs(h.y - p.y) < p.height) {
+            // CAUGHT!
+            h.active = false; // Remove from map (saved)
+            state.score += 1000; // Big bonus
+            createExplosion(p.x, p.y, CONFIG.COLORS.HUMANOID, 30); // Happy sparkles?
+            updateHUD();
+        }
+    }
+}
+
+function createExplosion(x, y, color, count=15, isBig=false) {
+    for(let i=0; i<count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * (isBig ? 10 : 5);
+        
+        state.particles.push({
+            x: x,
+            y: y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            life: 1.0,
+            decay: Math.random() * 0.03 + 0.01,
+            color: color
+        });
+    }
+}
+
+function updateHUD() {
+    document.getElementById('scoreDisplay').innerText = `SCORE: ${state.score.toString().padStart(5, '0')}`;
+    document.getElementById('waveDisplay').innerText = `WAVE: ${state.wave}`;
+    
+    // Bomb visual
+    let bombStr = "SMART BOMBS: ";
+    for(let i=0; i<state.smartBombs; i++) bombStr += "|";
+    document.getElementById('smartBombs').innerText = bombStr;
+    
+    document.getElementById('livesDisplay').innerText = `SHIPS: ${state.lives}`;
+}
+
+// --- Rendering ---
+
+function draw() {
+    const ctx = state.ctx;
+    const w = state.width;
+    const h = state.height;
+
+    // Clear Background
+    ctx.fillStyle = CONFIG.COLORS.BG || '#050505';
+    ctx.fillRect(0, 0, w, h);
+
+    // 1. Draw Stars (Parallax)
+    ctx.fillStyle = 'white';
+    state.stars.forEach(star => {
+        // Wrap star position relative to camera for infinite feel
+        let screenX = (star.x - state.cameraX * star.speed) % w;
+        if(screenX < 0) screenX += w;
+        
+        ctx.globalAlpha = Math.random() * 0.5 + 0.5; // Twinkle
+        ctx.fillRect(screenX, star.y, star.size, star.size);
+    });
+    ctx.globalAlpha = 1.0;
+
+    // Save context for camera transform
+    ctx.save();
+    ctx.translate(-state.cameraX, 0);
+
+    // 2. Draw Terrain
+    drawTerrain(ctx);
+
+    // 3. Draw Humanoids
+    state.humanoids.forEach(h => {
+        if(!h.active) return;
+        
+        // Simple Vector Man Stick Figure
+        ctx.strokeStyle = CONFIG.COLORS.HUMANOID;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        
+        if(h.isCaptured) {
+            // Struggling pose
+            ctx.moveTo(h.x - 5, h.y); 
+            ctx.lineTo(h.x + 5, h.y);
+            ctx.moveTo(h.x, h.y - 10);
+            ctx.lineTo(h.x, h.y + 10);
+            ctx.moveTo(h.x - 8, h.y - 5);
+            ctx.lineTo(h.x + 8, h.y + 5);
+        } else if (h.falling) {
+             // Falling pose
+             ctx.rect(h.x-4, h.y-8, 8, 16); // Body block
+             ctx.moveTo(h.x, h.y-12);
+             ctx.lineTo(h.x+10, h.y-2); // Arms out
+        } else {
+            // Walking animation (simplified)
+            const walkOffset = Math.sin(Date.now() / 100) * 5;
+            
+            // Head
+            ctx.moveTo(h.x - 3, h.y - 12);
+            ctx.lineTo(h.x + 3, h.y - 12);
+            ctx.lineTo(h.x + 3, h.y - 16);
+            ctx.lineTo(h.x - 3, h.y - 16);
+            ctx.closePath();
+            
+            // Body
+            ctx.moveTo(h.x, h.y - 12);
+            ctx.lineTo(h.x, h.y);
+            
+            // Legs
+            ctx.moveTo(h.x, h.y);
+            ctx.lineTo(h.x - 5 + walkOffset, h.y + 10); // Leg L
+            ctx.moveTo(h.x, h.y);
+            ctx.lineTo(h.x + 5 - walkOffset, h.y + 10); // Leg R
+            
+            // Arms
+            ctx.moveTo(h.x, h.y - 8);
+            ctx.lineTo(h.x - 6 - walkOffset, h.y - 4); // Arm L
+            ctx.moveTo(h.x, h.y - 8);
+            ctx.lineTo(h.x + 6 + walkOffset, h.y - 4); // Arm R
+        }
+        ctx.stroke();
+    });
+
+    // 4. Draw Enemies
+    state.enemies.forEach(e => {
+        if(!e.active) return;
+        
+        const color = e.type === 'Mutant' ? CONFIG.COLORS.MUTANT : CONFIG.COLORS.LANDER;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        
+        // Glow effect
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = color;
+
+        if(e.type === 'Lander') {
+            // Classic Pod shape
+            ctx.beginPath();
+            // Dome
+            ctx.arc(e.x, e.y - 5, 12, Math.PI, 0);
+            // Base
+            ctx.moveTo(e.x - 12, e.y - 5);
+            ctx.lineTo(e.x - 15, e.y + 10);
+            ctx.lineTo(e.x + 15, e.y + 10);
+            ctx.lineTo(e.x + 12, e.y - 5);
+            
+            // Legs (animated)
+            const legAnim = Math.sin(Date.now() / 50) * 3;
+            ctx.moveTo(e.x - 10, e.y + 10);
+            ctx.lineTo(e.x - 15 + legAnim, e.y + 20);
+            ctx.moveTo(e.x + 10, e.y + 10);
+            ctx.lineTo(e.x + 15 - legAnim, e.y + 20);
+            
+            ctx.stroke();
+        } 
+        else if (e.type === 'Mutant') {
+            // Spiky shape
+            ctx.beginPath();
+            const spikes = 8;
+            const outerRadius = 18;
+            const innerRadius = 10;
+            
+            for(let i=0; i<spikes*2; i++){
+                const r = (i%2 === 0) ? outerRadius : innerRadius;
+                const a = (Math.PI * i / spikes) + (Date.now()/200);
+                const px = e.x + Math.cos(a)*r;
+                const py = e.y + Math.sin(a)*r;
+                if(i===0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            
+            // Eyes
+            ctx.moveTo(e.x - 5, e.y - 2);
+            ctx.lineTo(e.x - 2, e.y);
+            ctx.moveTo(e.x + 5, e.y - 2);
+            ctx.lineTo(e.x + 2, e.y);
+            
+            ctx.stroke();
+        }
+        
+        ctx.shadowBlur = 0; // Reset glow
+    });
+
+    // 5. Draw Player
+    if(state.lives > 0) {
+        const p = state.player;
+        
+        // Flicker if invincible
+        if(p.invincible === 0 || Math.floor(Date.now() / 50) % 2 === 0) {
+            ctx.strokeStyle = CONFIG.COLORS.PLAYER;
+            ctx.lineWidth = 2;
+            
+            // Glow
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = CONFIG.COLORS.PLAYER;
+
+            ctx.beginPath();
+            
+            // Orient ship based on velocity X
+            const tilt = p.vx * -0.1; // Bank angle
+            
+            // Draw complex vector ship
+            // Nose
+            ctx.moveTo(p.x, p.y - 20);
+            // Right Wing
+            ctx.lineTo(p.x + 15 + (tilt*10), p.y + 10);
+            // Engine Notch
+            ctx.lineTo(p.x + 5, p.y + 5);
+            // Center bottom
+            ctx.lineTo(p.x, p.y + 15);
+            // Engine Notch Left
+            ctx.lineTo(p.x - 5, p.y + 5);
+            // Left Wing
+            ctx.lineTo(p.x - 15 + (tilt*10), p.y + 10);
+            
+            ctx.closePath();
+            
+            // Cockpit detail
+            ctx.moveTo(p.x - 3, p.y - 8);
+            ctx.lineTo(p.x + 3, p.y - 8);
+            ctx.lineTo(p.x, p.y - 14);
+            
+            // Thruster flame (if moving up)
+            if(keys.ArrowUp || Math.random() > 0.5) {
+                ctx.moveTo(p.x - 4, p.y + 15);
+                ctx.lineTo(p.x, p.y + 25 + Math.random()*10);
+                ctx.lineTo(p.x + 4, p.y + 15);
+            }
+
+            ctx.stroke();
+            
+            ctx.shadowBlur = 0;
+        }
+    }
+
+    // 6. Draw Bullets
+    state.bullets.forEach(b => {
+        ctx.strokeStyle = b.type === 'PLAYER' ? CONFIG.COLORS.BULLET : '#ff0000';
+        ctx.lineWidth = 2;
+        
+        ctx.beginPath();
+        if(b.type === 'PLAYER') {
+            ctx.rect(b.x - 2, b.y - 5, 4, 10);
+        } else {
+             // Enemy bullet (zigzag or circle)
+             ctx.arc(b.x, b.y, 3, 0, Math.PI*2);
+        }
+        ctx.stroke();
+    });
+
+    // 7. Draw Particles
+    state.particles.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life;
+        
+        // Draw vector lines for particles instead of dots for style
+        const vel = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - (p.x/vel)*2, p.y - (p.y/vel)*2);
+        ctx.stroke();
+        
+        // Fill dot
+        ctx.fillRect(p.x, p.y, 2, 2);
+    });
+    ctx.globalAlpha = 1.0;
+
+    ctx.restore(); // Restore camera transform
+    
+    // 8. Draw Radar / Minimap (Bottom Center)
+    drawRadar(ctx, w, h);
+}
+
+function drawTerrain(ctx) {
+    ctx.strokeStyle = CONFIG.COLORS.TERRAIN;
+    ctx.lineWidth = 2;
+    
+    ctx.beginPath();
+    
+    // Only draw visible segments to optimize
+    const startIdx = Math.floor(state.cameraX / (CONFIG.WORLD_WIDTH / CONFIG.TERRAIN_SEGMENTS));
+    const endIdx = startIdx + Math.ceil(state.width / (CONFIG.WORLD_WIDTH / CONFIG.TERRAIN_SEGMENTS)) + 2;
+    
+    // Clamp
+    const sI = Math.max(0, startIdx);
+    const eI = Math.min(state.terrainPoints.length - 1, endIdx);
+
+    if(state.terrainPoints.length > 0) {
+        ctx.moveTo(state.terrainPoints[sI].x, state.terrainPoints[sI].y);
+        
+        for(let i=sI; i<eI; i++) {
+            // Smooth curve using quadratic Bezier between midpoints
+            const p0 = state.terrainPoints[i];
+            const p1 = state.terrainPoints[i+1];
+            
+            const midX = (p0.x + p1.x) / 2;
+            const midY = (p0.y + p1.y) / 2;
+            
+            ctx.quadraticCurveTo(p0.x, p0.y, midX, midY);
+        }
+        // Finish last segment
+        ctx.lineTo(state.terrainPoints[eI].x, state.terrainPoints[eI].y);
+        
+        // Fill ground (Scanlines style)
+        ctx.lineTo(state.terrainPoints[eI].x, state.height + 1000); // Down to bottom
+        ctx.lineTo(state.terrainPoints[sI].x, state.height + 1000); // Back across
+        ctx.closePath();
+    }
+    
+    ctx.stroke();
+
+    // Add grid lines on terrain for retro feel
+    ctx.save();
+    ctx.clip(); // Clip to terrain shape
+    ctx.strokeStyle = 'rgba(68, 68, 255, 0.2)';
+    ctx.lineWidth = 1;
+    
+    const gridSpacing = 100;
+    // Vertical lines moving with world
+    const offsetX = -(state.cameraX % gridSpacing);
+    
+    for(let gx = state.cameraX + offsetX; gx < state.cameraX + state.width; gx += gridSpacing) {
+        if(gx < 0 || gx > CONFIG.WORLD_WIDTH) continue;
+        
+        // Draw line from top of terrain segment to bottom
+        const groundY = getTerrainHeightAt(gx);
+        ctx.beginPath();
+        ctx.moveTo(gx, groundY);
+        ctx.lineTo(gx, state.height + 100);
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function drawRadar(ctx, w, h) {
+    const rw = 200; // Radar Width
+    const rh = 40;  // Radar Height
+    const rx = (w - rw) / 2;
+    const ry = h - rh - 20;
+    
+    // Background
+    ctx.fillStyle = 'rgba(0, 50, 0, 0.5)';
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 1;
+    ctx.fillRect(rx, ry, rw, rh);
+    ctx.strokeRect(rx, ry, rw, rh);
+    
+    // Function to map world X to radar X
+    const mapX = (worldX) => {
+        return rx + (worldX / CONFIG.WORLD_WIDTH) * rw;
+    };
+    
+    // Humanoids (White dots)
+    state.humanoids.forEach(h => {
+        if(!h.active || h.isCaptured) return;
+        ctx.fillStyle = 'white';
+        ctx.fillRect(mapX(h.x), ry + rh/2 - 1, 2, 2);
+    });
+    
+    // Enemies (Red dots)
+    state.enemies.forEach(e => {
+        if(!e.active) return;
+        ctx.fillStyle = e.type === 'Mutant' ? '#ffaa00' : '#ff0000';
+        ctx.fillRect(mapX(e.x), ry + rh/2 - 1, 3, 3);
+    });
+    
+    // Player (Green Triangle)
+    const px = mapX(state.player.x);
+    ctx.fillStyle = '#39ff14';
+    ctx.beginPath();
+    ctx.moveTo(px, ry + 5);
+    ctx.lineTo(px + 4, ry + rh - 5);
+    ctx.lineTo(px - 4, ry + rh - 5);
+    ctx.fill();
+    
+    // Viewport cones (Show what player can see)
+    const camLeft = mapX(state.cameraX);
+    const camRight = mapX(state.cameraX + state.width);
+    
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
+    ctx.beginPath();
+    ctx.moveTo(camLeft, ry);
+    ctx.lineTo(camLeft, ry+rh);
+    ctx.moveTo(camRight, ry);
+    ctx.lineTo(camRight, ry+rh);
+    ctx.stroke();
+}
+
+// Start
+init();
+
+</script>
+</body>
+</html>

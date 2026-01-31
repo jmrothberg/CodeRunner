@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft Adventure - Three.js</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #2c3e50;
+            color: white;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-container {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            padding: 15px;
+            background: rgba(30, 40, 60, 0.85);
+            border-radius: 12px;
+            max-width: 320px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.7);
+            border: 2px solid #3498db;
+        }
+        #game-title {
+            font-size: 26px;
+            margin-bottom: 8px;
+            color: #f39c12;
+            text-shadow: 0 0 5px rgba(243, 156, 18, 0.7);
+            text-align: center;
+        }
+        #instructions {
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 10px;
+        }
+        .key {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 0 1px;
+        }
+        #interaction-panel {
+            position: absolute;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30, 60, 90, 0.9);
+            padding: 20px 30px;
+            border-radius: 12px;
+            text-align: center;
+            max-width: 80%;
+            display: none;
+            box-shadow: 0 5px 25px rgba(0, 0, 0, 0.7);
+            border: 2px solid #3498db;
+        }
+        #dialogue-box {
+            font-size: 18px;
+            margin-bottom: 15px;
+            min-height: 40px;
+            color: #ecf0f1;
+        }
+        .npc-name {
+            color: #3498db;
+            font-weight: bold;
+        }
+        .npc-option {
+            background: linear-gradient(to bottom, #2c3e50, #1a2530);
+            border: 1px solid #3498db;
+            color: white;
+            padding: 10px 18px;
+            margin: 6px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 15px;
+        }
+        .npc-option:hover {
+            background: linear-gradient(to bottom, #3498db, #2980b9);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        #inventory {
+            position: absolute;
+            bottom: 15px;
+            right: 70px;
+            display: flex;
+            gap: 6px;
+        }
+        .item-slot {
+            width: 50px;
+            height: 50px;
+            background: rgba(30, 40, 50, 0.8);
+            border: 2px solid #7f8c8d;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+        }
+        .item-slot.active {
+            border-color: #f39c12;
+            box-shadow: 0 0 8px rgba(243, 156, 18, 0.7);
+            transform: scale(1.1);
+        }
+        .item-name {
+            position: absolute;
+            bottom: -60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30, 40, 80, 0.9);
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            white-space: nowrap;
+            display: none;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.7);
+        }
+        .item-slot:hover .item-name {
+            display: block;
+        }
+        #health-bar {
+            position: absolute;
+            top: 15px;
+            right: 80px;
+            width: 230px;
+            height: 30px;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.7);
+        }
+        #health-fill {
+            height: 100%;
+            width: 85%;
+            background: linear-gradient(to right, #e74c3c, #2ecc71);
+            transition: width 0.3s;
+        }
+        #loading-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #2c3e50, #1a2530);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+        }
+        .loader {
+            border: 8px solid rgba(44, 62, 80, 1);
+            border-top: 8px solid #3498db;
+            border-radius: 50%;
+            width: 70px;
+            height: 70px;
+            animation: spin 1.2s linear infinite;
+            margin-bottom: 25px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #help-screen {
+            position: absolute;
+            top: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            max-width: 920px;
+            background: rgba(30, 60, 100, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
+            border: 3px solid #3498db;
+            z-index: 200;
+            display: none;
+        }
+        #help-content {
+            max-height: 75vh;
+            overflow-y: auto;
+            padding-right: 10px;
+        }
+        #help-content::-webkit-scrollbar {
+            width: 8px;
+        }
+        #help-content::-webkit-scrollbar-track {
+            background: rgba(30, 40, 60, 0.5);
+            border-radius: 4px;
+        }
+        #help-content::-webkit-scrollbar-thumb {
+            background: #3498db;
+            border-radius: 4px;
+        }
+        #help-title {
+            font-size: 28px;
+            color: #f39c12;
+            text-align: center;
+            margin-bottom: 5px;
+        }
+        .help-section {
+            margin: 20px 0;
+        }
+        .help-section h3 {
+            color: #3498db;
+            font-size: 22px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #7f8c8d;
+            padding-bottom: 5px;
+        }
+        .help-item {
+            display: flex;
+            margin: 12px 0;
+            align-items: center;
+        }
+        .help-key {
+            background: rgba(243, 156, 18, 0.3);
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            min-width: 40px;
+            text-align: center;
+            margin-right: 15px;
+            color: #f39c12;
+        }
+        .help-description {
+            flex-grow: 1;
+        }
+        #close-help {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(30, 60, 90, 0.8);
+            border: 1px solid #f39c12;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #close-help:hover {
+            background: rgba(52, 152, 219, 0.8);
+        }
+        #minimap-container {
+            position: absolute;
+            top: 60px;
+            right: 70px;
+            width: 180px;
+            height: 130px;
+            background: rgba(0, 0, 20, 0.85);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0, 40, 80, 0.7);
+            z-index: 150;
+            border: 3px solid #3498db;
+        }
+        #minimap {
+            width: 100%;
+            height: 100%;
+        }
+        .minimap-player {
+            position: absolute;
+            top: 62px;
+            left: 87px;
+            width: 6px;
+            height: 6px;
+            background: #ff5555;
+            transform-origin: center center;
+            border-radius: 100%;
+        }
+        .minimap-npc {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            transform: translate(-3px, -3px);
+        }
+        #notification {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(20, 40, 80, 0.95);
+            padding: 15px 30px;
+            border-radius: 6px;
+            font-size: 18px;
+            display: none;
+            z-index: 300;
+            text-align: center;
+            box-shadow: 0 0 25px rgba(52, 152, 219, 0.7);
+            border: 2px solid #f39c12;
+        }
+        .action-hint {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30, 60, 90, 0.8);
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-size: 16px;
+            display: none;
+            z-index: 150;
+            text-align: center;
+            box-shadow: 0 0 15px rgba(0, 40, 80, 0.7);
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-screen">
+        <div class="loader"></div>
+        <h2>Loading Minecraft Adventure...</h2>
+        <p>Generating terrain and characters</p>
+    </div>
+
+    <div id="ui-container">
+        <div id="game-title">Minecraft Adventure</div>
+        <div id="instructions">
+            <p>Navigate with <span class="key">WASD</span> or arrow keys (relative to view)</p>
+            <p>Look around by moving your mouse | Press <span class="key">SPACE</span> to jump</p>
+            <p><span class="key">E</span> to interact | <span class="key">H</span> for help | <span class="key">B</span> to build</p>
+        </div>
+    </div>
+
+    <div id="interaction-panel">
+        <div id="dialogue-box"></div>
+        <div id="npc-options"></div>
+    </div>
+
+    <div id="health-bar">
+        <div id="health-fill"></div>
+    </div>
+
+    <div id="inventory">
+        <div class="item-slot active" data-item="pickaxe">⛏️<span class="item-name">Pickaxe (Mine blocks)</span></div>
+        <div class="item-slot" data-item="wood">🌲<span class="item-name">Wood Planks (Build structures)</span></div>
+        <div class="item-slot" data-item="torch">🔥<span class="item-name">Torch (Light areas)</span></div>
+        <div class="item-slot" data-item="apple">🍎<span class="item-name">Apple (Restore health)</span></div>
+    </div>
+
+    <div id="minimap-container">
+        <canvas id="minimap"></canvas>
+        <div class="minimap-player"></div>
+    </div>
+
+    <div id="help-screen">
+        <button id="close-help">Close Help (H)</button>
+        <div id="help-content">
+            <h1 id="help-title">Minecraft Adventure - Complete Guide</h1>
+            
+            <div class="help-section">
+                <h3>Movement Controls</h3>
+                <div class="help-item">
+                    <div class="help-key">W / ↑</div>
+                    <div class="help-description">Move forward (relative to camera direction)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">S / ↓</div>
+                    <div class="help-description">Move backward (relative to camera direction)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">A / ←</div>
+                    <div class="help-description">Strafe left (relative to camera direction)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">D / →</div>
+                    <div class="help-description">Strafe right (relative to camera direction)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">SPACE</div>
+                    <div class="help-description">Jump</div>
+                </div>
+            </div>
+            
+            <div class="help-section">
+                <h3>Interaction & Inventory</h3>
+                <div class="help-item">
+                    <div class="help-key">E</div>
+                    <div class="help-description">Interact with NPCs or objects (when close)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">1-4</div>
+                    <div class="help-description">Select inventory items</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">B</div>
+                    <div class="help-description">Build with selected item (wood planks)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">H</div>
+                    <div class="help-description">Toggle this help screen</div>
+                </div>
+            </div>
+            
+            <div class="help-section">
+                <h3>Items & Actions</h3>
+                <div class="help-item">
+                    <div class="help-key">⛏️ Pickaxe</div>
+                    <div class="help-description">Mine blocks by looking at them and pressing E (not implemented yet)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">🌲 Wood Planks</div>
+                    <div class="help-description">Build structures - press B to place a block in front of you</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">🔥 Torch</div>
+                    <div class="help-description">Light up dark areas (not implemented yet)</div>
+                </div>
+                <div class="help-item">
+                    <div class="help-key">🍎 Apple</div>
+                    <div class="help-description">Restore 25 health points when selected and used</div>
+                </div>
+            </div>
+            
+            <div class="help-section">
+                <h3>Game Features</h3>
+                <p>Explore the block-based world, interact with NPCs to learn about the area, build structures using wood planks, and use your inventory items strategically. The minimap shows your position and nearby blocks.</p>
+                <p><strong>Note:</strong> Collision detection prevents walking through blocks. Building is possible with wood planks when selected.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="notification"></div>
+    
+    <div class="action-hint" id="build-hint">Press B to build a block here</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Main game variables
+        let scene, camera, renderer;
+        let player, controls;
+        let world = [];
+        let npcs = [];
+        let raycaster, mouse;
+        let clock = new THREE.Clock();
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let canJump = true;
+        let velocityY = 0;
+        let gravity = -9.8;
+        let playerHeight = 1.8;
+        let interactableObjects = [];
+        let currentDialogue = null;
+        let activeItemIndex = 2; // Start with wood planks
+        let health = 75;
+        let minimapCtx, minimapCanvas;
+        let helpVisible = false;
+        let buildMode = false;
+        let placedBlocks = [];
+
+        // Initialize the game
+        function init() {
+            console.log("Initializing Minecraft Adventure...");
+            
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); // Sky blue
+            scene.fog = new THREE.Fog(0x87CEEB, 25, 120);
+
+            // Create camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 300);
+            camera.position.set(3, playerHeight, 4);
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // Add lighting
+            const ambientLight = new THREE.AmbientLight(0x606060, 1.5);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0);
+            directionalLight.position.set(1, 3, 1).normalize();
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            scene.add(directionalLight);
+
+            // Create world
+            createWorld();
+
+            // Create player
+            createPlayer();
+
+            // Create NPCs
+            createNPCs();
+
+            // Setup raycaster for interaction
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            // Initialize minimap
+            initMinimap();
+
+            // Event listeners
+            setupEventListeners();
+
+            // Hide loading screen
+            setTimeout(() => {
+                document.getElementById('loading-screen').style.display = 'none';
+                showNotification("Welcome to Minecraft Adventure! Press H for help.");
+            }, 1500);
+
+            console.log("Game initialized successfully!");
+        }
+
+        // Create the block-based world
+        function createWorld() {
+            console.log("Generating terrain...");
+            
+            const blockSize = 1;
+            const worldSize = 25;
+            const groundLevel = -3;
+
+            // Create grass blocks for ground
+            for (let x = -worldSize; x <= worldSize; x++) {
+                for (let z = -worldSize; z <= worldSize; z++) {
+                    // Create ground block
+                    createBlock(x, groundLevel, z, 0x7CFC00); // Grass green
+                    
+                    // Randomly place trees and rocks
+                    if (Math.random() > 0.95) {
+                        const height = Math.floor(Math.random() * 3) + 2;
+                        for (let y = groundLevel + 1; y <= groundLevel + height; y++) {
+                            createBlock(x, y, z, 0x8B4513); // Tree brown
+                        }
+                        
+                        // Add leaves at the top
+                        if (height > 2) {
+                            for (let lx = x - 1; lx <= x + 1; lx++) {
+                                for (let lz = z - 1; lz <= z + 1; lz++) {
+                                    createBlock(lx, groundLevel + height + 0.5, lz, 0x228B22); // Forest green
+                                }
+                            }
+                        }
+                    } else if (Math.random() > 0.98) {
+                        createBlock(x, groundLevel + 1, z, 0x808080); // Rock gray
+                    }
+                }
+            }
+
+            // Create a small house for the villager
+            const houseX = -5;
+            const houseZ = -7;
+            const houseY = groundLevel + 2;
+            
+            // House floor
+            for (let x = houseX - 3; x <= houseX + 4; x++) {
+                for (let z = houseZ - 3; z <= houseZ + 5; z++) {
+                    createBlock(x, groundLevel + 1, z, 0xD2B48C); // Tan
+                }
+            }
+            
+            // House walls
+            for (let y = groundLevel + 2; y <= groundLevel + 6; y++) {
+                // Front and back walls
+                createBlock(houseX - 3, y, houseZ - 4, 0x8B4513);
+                createBlock(houseX + 4, y, houseZ - 4, 0x8B4513);
+                createBlock(houseX - 3, y, houseZ + 6, 0x8B4513);
+                createBlock(houseX + 4, y, houseZ + 6, 0x8B4513);
+                
+                // Side walls
+                for (let x = houseX - 2; x <= houseX + 3; x++) {
+                    createBlock(x, y, houseZ - 4, 0x8B4513);
+                    createBlock(x, y, houseZ + 6, 0x8B4513);
+                }
+                
+                for (let z = houseZ - 2; z <= houseZ + 5; z++) {
+                    createBlock(houseX - 3, y, z, 0x8B4513);
+                    createBlock(houseX + 4, y, z, 0x8B4513);
+                }
+            }
+            
+            // House roof
+            for (let x = houseX - 4; x <= houseX + 6; x++) {
+                for (let z = houseZ - 5; z <= houseZ + 7; z++) {
+                    createBlock(x, groundLevel + 8, z, 0xA52A2A); // Red
+                }
+            }
+            
+            // Door opening
+            createBlock(houseX, groundLevel + 3, houseZ - 4, 0x7CFC00);
+            createBlock(houseX, groundLevel + 1, houseZ - 6, 0x8B4513); // Door step
+            
+            console.log("Terrain generation complete!");
+        }
+
+        // Create a single block
+        function createBlock(x, y, z, color) {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshLambertMaterial({ color: color });
+            const block = new THREE.Mesh(geometry, material);
+            
+            block.position.set(x, y, z);
+            block.castShadow = true;
+            block.receiveShadow = true;
+            
+            scene.add(block);
+            world.push({
+                mesh: block,
+                x: Math.round(x),
+                y: Math.round(y),
+                z: Math.round(z),
+                color: color
+            });
+        }
+
+        // Create player representation
+        function createPlayer() {
+            console.log("Creating player...");
+            
+            // Player is represented by the camera position
+            // We'll add a simple visual indicator for debugging
+            const geometry = new THREE.SphereGeometry(0.2, 16, 16);
+            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            player = new THREE.Mesh(geometry, material);
+            player.visible = false; // Hide the visual indicator
+            scene.add(player);
+            
+            console.log("Player created!");
+        }
+
+        // Create NPCs in the world
+        function createNPCs() {
+            console.log("Creating NPCs...");
+            
+            // Villager NPC
+            const villagerGeometry = new THREE.CylinderGeometry(0.5, 0.7, 1.8, 24);
+            const villagerMaterial = new THREE.MeshLambertMaterial({ color: 0x4169E1 });
+            const villager = new THREE.Mesh(villagerGeometry, villagerMaterial);
+            villager.position.set(-5, -1, -3);
+            villager.castShadow = true;
+            scene.add(villager);
+            
+            // Add a face to the villager
+            const faceGeometry = new THREE.SphereGeometry(0.4, 8, 8);
+            const faceMaterial = new THREE.MeshLambertMaterial({ color: 0xFFD700 });
+            const face = new THREE.Mesh(faceGeometry, faceMaterial);
+            face.position.set(0, 1.2, 0.8);
+            villager.add(face);
+            
+            // Add eyes
+            const eyeGeometry = new THREE.SphereGeometry(0.1, 4, 3);
+            const eyeMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+            
+            const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            leftEye.position.set(-0.2, 1.5, 1.1);
+            villager.add(leftEye);
+            
+            const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            rightEye.position.set(0.2, 1.5, 1.1);
+            villager.add(rightEye);
+            
+            // Add dialogue indicator
+            const indicatorGeometry = new THREE.SphereGeometry(0.3, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+            const indicatorMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0x00FF00,
+                transparent: true,
+                opacity: 0.7
+            });
+            const indicator = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
+            indicator.position.set(0, 3, 1.5);
+            indicator.rotation.x = Math.PI;
+            villager.add(indicator);
+            
+            npcs.push({
+                mesh: villager,
+                name: "Villager",
+                dialogue: [
+                    {
+                        text: "Hello traveler! Welcome to our village.",
+                        options: ["Who are you?", "What's around here?", "Goodbye"]
+                    },
+                    {
+                        text: "I'm a humble villager. I've lived here all my life.",
+                        options: ["Tell me about the area", "Do you need help?", "Back"]
+                    },
+                    {
+                        text: "There's a dangerous cave to the east and a beautiful forest to the west.",
+                        options: ["Thanks for the info!", "I'll explore then.", "Back"]
+                    }
+                ],
+                currentDialogueIndex: 0
+            });
+            
+            // Explorer NPC
+            const explorerGeometry = new THREE.CylinderGeometry(0.5, 0.7, 1.8, 24);
+            const explorerMaterial = new THREE.MeshLambertMaterial({ color: 0x2E8B57 });
+            const explorer = new THREE.Mesh(explorerGeometry, explorerMaterial);
+            explorer.position.set(8, -3, 6);
+            explorer.castShadow = true;
+            scene.add(explorer);
+            
+            // Add a face to the explorer
+            const expFaceGeometry = new THREE.SphereGeometry(0.4, 8, 12);
+            const expFaceMaterial = new THREE.MeshLambertMaterial({ color: 0xFFA500 });
+            const expFace = new THREE.Mesh(expFaceGeometry, expFaceMaterial);
+            expFace.position.set(0, 1.2, 0.8);
+            explorer.add(expFace);
+            
+            // Add a hat
+            const hatGeometry = new THREE.CylinderGeometry(0.6, 0.5, 0.3, 16);
+            const hatMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+            const hat = new THREE.Mesh(hatGeometry, hatMaterial);
+            hat.position.set(0, 2.2, 0);
+            explorer.add(hat);
+            
+            // Add dialogue indicator
+            const expIndicator = new THREE.Mesh(indicatorGeometry, indicatorMaterial);
+            expIndicator.position.set(0, 3, 1.5);
+            expIndicator.rotation.x = Math.PI;
+            explorer.add(expIndicator);
+            
+            npcs.push({
+                mesh: explorer,
+                name: "Explorer",
+                dialogue: [
+                    {
+                        text: "Greetings! I've been exploring these lands for years.",
+                        options: ["What have you discovered?", "Any dangers ahead?", "Goodbye"]
+                    },
+                    {
+                        text: "I found ancient ruins to the north and a mysterious temple in the south.",
+                        options: ["Tell me more about the ruins", "Temple sounds interesting", "Back"]
+                    },
+                    {
+                        text: "The ruins are filled with puzzles. Bring a torch if you go there!",
+                        options: ["Thanks for the tip!", "I'll be careful.", "Back"]
+                    }
+                ],
+                currentDialogueIndex: 0
+            });
+            
+            // Add NPCs to interactable objects
+            npcs.forEach(npc => {
+                interactableObjects.push(npc.mesh);
+            });
+            
+            console.log("NPCs created!");
+        }
+
+        // Initialize minimap
+        function initMinimap() {
+            minimapCanvas = document.getElementById('minimap');
+            minimapCtx = minimapCanvas.getContext('2d');
+            minimapCanvas.width = 180;
+            minimapCanvas.height = 130;
+            
+            updateMinimap();
+        }
+
+        // Update minimap display
+        function updateMinimap() {
+            if (!minimapCtx) return;
+            
+            const scale = 4; // Scale factor for the map (higher = more zoomed in)
+            const centerX = minimapCanvas.width / 2;
+            const centerY = minimapCanvas.height / 2;
+            
+            // Clear canvas
+            minimapCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+            
+            // Draw background (sky)
+            minimapCtx.fillStyle = '#87CEEB';
+            minimapCtx.fillRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+            
+            // Draw ground
+            minimapCtx.fillStyle = '#2E8B57';
+            minimapCtx.beginPath();
+            minimapCtx.arc(centerX, centerY, 60, 0, Math.PI * 2);
+            minimapCtx.fill();
+            
+            // Draw blocks in the world (simplified grid)
+            const playerPos = camera.position;
+            const blockSize = 3; // Size of each block on the map
+            
+            // Only draw blocks within a certain range
+            for (const block of world) {
+                const dx = block.x - Math.round(playerPos.x);
+                const dz = block.z - Math.round(playerPos.z);
+                
+                if (Math.abs(dx) < 25 && Math.abs(dz) < 18) {
+                    const x = centerX + dx * scale;
+                    const z = centerY + dz * scale;
+                    
+                    // Draw block
+                    minimapCtx.fillStyle = `#${block.color.toString(16).padStart(6, '0')}`;
+                    minimapCtx.fillRect(x - blockSize/2, z - blockSize/2, blockSize, blockSize);
+                }
+            }
+            
+            // Draw placed blocks (buildings)
+            for (const block of placedBlocks) {
+                const dx = block.x - Math.round(playerPos.x);
+                const dz = block.z - Math.round(playerPos.z);
+                
+                if (Math.abs(dx) < 25 && Math.abs(dz) < 18) {
+                    const x = centerX + dx * scale;
+                    const z = centerY + dz * scale;
+                    
+                    // Draw placed block
+                    minimapCtx.fillStyle = `#${block.color.toString(16).padStart(6, '0')}`;
+                    minimapCtx.fillRect(x - blockSize/2, z - blockSize/2, blockSize, blockSize);
+                }
+            }
+            
+            // Draw NPCs on minimap
+            npcs.forEach((npc, index) => {
+                const npcPos = npc.mesh.position;
+                const dx = Math.round(npcPos.x) - Math.round(playerPos.x);
+                const dz = Math.round(npcPos.z) - Math.round(playerPos.z);
+                
+                // Only show NPCs within a certain distance
+                if (Math.abs(dx) < 25 && Math.abs(dz) < 18) {
+                    const x = centerX + dx * scale;
+                    const z = centerY + dz * scale;
+                    
+                    // Draw NPC marker
+                    minimapCtx.fillStyle = '#4169E1';
+                    minimapCtx.beginPath();
+                    minimapCtx.arc(x, z, 3, 0, Math.PI * 2);
+                    minimapCtx.fill();
+                }
+            });
+            
+            // Draw player position (center)
+            minimapCtx.fillStyle = '#FF5555';
+            minimapCtx.beginPath();
+            minimapCtx.arc(centerX, centerY, 4, 0, Math.PI * 2);
+            minimapCtx.fill();
+        }
+
+        // Setup event listeners for controls
+        function setupEventListeners() {
+            document.addEventListener('keydown', onKeyDown, false);
+            document.addEventListener('keyup', onKeyUp, false);
+            document.addEventListener('mousemove', onMouseMove, false);
+            document.addEventListener('click', onMouseClick, false);
+            
+            window.addEventListener('resize', onWindowResize, false);
+            
+            // Item selection
+            for (let i = 1; i <= 4; i++) {
+                document.addEventListener('keydown', function(event) {
+                    if (event.key === String(i)) {
+                        selectItem(i - 1);
+                    }
+                });
+            }
+            
+            // Help screen toggle
+            document.getElementById('close-help').addEventListener('click', toggleHelpScreen);
+        }
+
+        // Handle key down events
+        function onKeyDown(event) {
+            switch (event.keyCode) {
+                case 38: // up arrow
+                case 104: // numpad 8
+                case 73: // i
+                case 90: // z
+                    moveForward = true;
+                    break;
+                case 65: // a
+                case 222: // '
+                    moveLeft = true;
+                    break;
+                case 100: // numpad 4
+                case 81: // q
+                    moveLeft = true;
+                    break;
+                case 37: // left arrow
+                case 102: // numpad 6
+                case 90: // z (when not moving forward)
+                    if (!moveForward) {
+                        moveRight = true;
+                    }
+                    break;
+                case 68: // d
+                    moveRight = true;
+                    break;
+                case 40: // down arrow
+                case 101: // numpad 5
+                case 32: // space
+                    if (canJump) {
+                        velocityY = 5;
+                        canJump = false;
+                    }
+                    break;
+                case 16: // shift - sprinting could be implemented here
+                    break;
+                case 72: // h - toggle help screen
+                    toggleHelpScreen();
+                    break;
+                case 80: // p - use item (placeholder)
+                    if (!helpVisible) {
+                        useItem();
+                    }
+                    break;
+                case 69: // e - interact or build
+                    if (!helpVisible && !currentDialogue) {
+                        if (buildMode) {
+                            placeBlock();
+                        } else {
+                            checkInteraction();
+                        }
+                    }
+                    break;
+                case 103: // numpad 7 - toggle build mode
+                case 66: // b - toggle build mode
+                    if (!helpVisible && !currentDialogue) {
+                        toggleBuildMode();
+                    }
+                    break;
+            }
+        }
+
+        // Handle key up events
+        function onKeyUp(event) {
+            switch (event.keyCode) {
+                case 38: // up arrow
+                case 104: // numpad 8
+                case 73: // i
+                case 90: // z
+                    moveForward = false;
+                    break;
+                case 65: // a
+                case 222: // '
+                case 100: // numpad 4
+                case 81: // q
+                    moveLeft = false;
+                    break;
+                case 37: // left arrow
+                case 90: // z (when not moving forward)
+                case 68: // d
+                case 222: // '
+                    if (!moveForward) {
+                        moveRight = false;
+                    }
+                    break;
+                case 102: // numpad 6
+                    moveRight = false;
+                    break;
+            }
+        }
+
+        // Handle mouse movement for camera look
+        function onMouseMove(event) {
+            if (document.pointerLockElement === renderer.domElement) {
+                camera.rotation.y -= event.movementX * 0.002;
+                camera.rotation.x -= event.movementY * 0.002;
+                
+                // Limit vertical rotation to prevent flipping
+                camera.rotation.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, camera.rotation.x));
+            }
+        }
+
+        // Handle mouse click for interaction
+        function onMouseClick(event) {
+            if (document.pointerLockElement !== renderer.domElement && !helpVisible) {
+                renderer.domElement.requestPointerLock();
+                return;
+            }
+            
+            if (!currentDialogue) {
+                checkInteraction();
+            }
+        }
+
+        // Check for interactions with objects or NPCs
+        function checkInteraction() {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactableObjects);
+            
+            if (intersects.length > 0) {
+                const object = intersects[0].object;
+                
+                // Find which NPC was clicked
+                const npc = npcs.find(n => n.mesh === object);
+                if (npc) {
+                    startDialogue(npc);
+                }
+            } else {
+                // Close dialogue if clicking on nothing
+                closeDialogue();
+            }
+        }
+
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Toggle help screen visibility
+        function toggleHelpScreen() {
+            const helpScreen = document.getElementById('help-screen');
+            helpVisible = !helpVisible;
+            
+            if (helpVisible) {
+                helpScreen.style.display = 'block';
+                document.exitPointerLock();
+            } else {
+                helpScreen.style.display = 'none';
+                renderer.domElement.requestPointerLock();
+            }
+        }
+
+        // Start NPC dialogue
+        function startDialogue(npc) {
+            currentDialogue = npc;
+            document.getElementById('interaction-panel').style.display = 'block';
+            
+            const dialogueBox = document.getElementById('dialogue-box');
+            const optionsContainer = document.getElementById('npc-options');
+            
+            dialogueBox.innerHTML = `<span class="npc-name">${npc.name}:</span> ${npc.dialogue[npc.currentDialogueIndex].text}`;
+            
+            // Clear previous options
+            optionsContainer.innerHTML = '';
+            
+            // Add new options
+            npc.dialogue[npc.currentDialogueIndex].options.forEach((option, index) => {
+                const button = document.createElement('button');
+                button.className = 'npc-option';
+                button.textContent = option;
+                button.onclick = () => handleNPCOption(npc, index);
+                optionsContainer.appendChild(button);
+            });
+        }
+
+        // Handle NPC dialogue options
+        function handleNPCOption(npc, optionIndex) {
+            const currentDialogue = npc.dialogue[npc.currentDialogueIndex];
+            
+            if (currentDialogue.options[optionIndex] === "Goodbye") {
+                closeDialogue();
+                return;
+            }
+            
+            if (currentDialogue.options[optionIndex] === "Back") {
+                npc.currentDialogueIndex = Math.max(0, npc.currentDialogueIndex - 1);
+            } else {
+                // Advance dialogue
+                npc.currentDialogueIndex = Math.min(npc.dialogue.length - 1, npc.currentDialogueIndex + 1);
+            }
+            
+            startDialogue(npc);
+        }
+
+        // Close NPC dialogue
+        function closeDialogue() {
+            document.getElementById('interaction-panel').style.display = 'none';
+            currentDialogue = null;
+        }
+
+        // Select an item in the inventory
+        function selectItem(index) {
+            const slots = document.querySelectorAll('.item-slot');
+            slots.forEach((slot, i) => {
+                if (i === index) {
+                    slot.classList.add('active');
+                    activeItemIndex = i;
+                    
+                    // Show notification for selected item
+                    const itemName = slot.querySelector('.item-name').textContent.split('(')[0].trim();
+                    showNotification(`Selected: ${itemName}`);
+                    
+                    // Toggle build mode hint based on selection
+                    if (i === 1) { // Wood planks
+                        document.getElementById('build-hint').style.display = 'block';
+                    } else {
+                        document.getElementById('build-hint').style.display = 'none';
+                    }
+                } else {
+                    slot.classList.remove('active');
+                }
+            });
+        }
+
+        // Use an item (placeholder implementation)
+        function useItem() {
+            const items = ['Pickaxe', 'Wood Planks', 'Torch', 'Apple'];
+            const selectedItem = items[activeItemIndex];
+            
+            switch(selectedItem) {
+                case 'Apple':
+                    health = Math.min(100, health + 25);
+                    document.getElementById('health-fill').style.width = `${health}%`;
+                    showNotification("You ate an apple! Health restored.");
+                    break;
+                default:
+                    showNotification(`Using ${selectedItem}... (not implemented)`);
+            }
+        }
+
+        // Toggle build mode
+        function toggleBuildMode() {
+            if (activeItemIndex === 1) { // Only wood planks can be used for building
+                buildMode = !buildMode;
+                
+                if (buildMode) {
+                    showNotification("Build Mode: ON - Press E to place a block");
+                    document.getElementById('build-hint').style.display = 'block';
+                } else {
+                    showNotification("Build Mode: OFF");
+                    document.getElementById('build-hint').style.display = 'none';
+                }
+            } else {
+                showNotification("Select wood planks (2) for building");
+            }
+        }
+
+        // Place a block in front of the player
+        function placeBlock() {
+            if (!buildMode || activeItemIndex !== 1) return;
+            
+            // Calculate position in front of player
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            direction.y = 0; // Keep horizontal
+            direction.normalize();
+            
+            // Position block one unit in front of player
+            const blockPos = new THREE.Vector3(
+                Math.round(camera.position.x + direction.x * 2),
+                Math.round(camera.position.y - 1.5), // Place at ground level
+                Math.round(camera.position.z + direction.z * 2)
+            );
+            
+            // Check if position is already occupied
+            const existingBlock = world.find(b => 
+                b.x === blockPos.x && 
+                b.y === blockPos.y && 
+                b.z === blockPos.z
+            ) || placedBlocks.find(b => 
+                b.x === blockPos.x && 
+                b.y === blockPos.y && 
+                b.z === blockPos.z
+            );
+            
+            if (!existingBlock) {
+                // Create new block
+                const geometry = new THREE.BoxGeometry(1, 1, 1);
+                const material = new THREE.MeshLambertMaterial({ color: 0xD2B48C }); // Wood planks color
+                const block = new THREE.Mesh(geometry, material);
+                
+                block.position.set(blockPos.x, blockPos.y, blockPos.z);
+                block.castShadow = true;
+                block.receiveShadow = true;
+                
+                scene.add(block);
+                
+                placedBlocks.push({
+                    mesh: block,
+                    x: blockPos.x,
+                    y: blockPos.y,
+                    z: blockPos.z,
+                    color: 0xD2B48C
+                });
+                
+                showNotification("Block placed!");
+            } else {
+                showNotification("Can't place block here");
+            }
+        }
+
+        // Show notification message
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.display = 'block';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
+        // Check for collisions with blocks
+        function checkCollisions() {
+            const playerPos = camera.position;
+            const playerRadius = 0.4; // Player collision radius
+            
+            for (const block of [...world, ...placedBlocks]) {
+                const dx = Math.abs(playerPos.x - block.x);
+                const dy = Math.abs(playerPos.y - (block.y + 0.5)); // Block center Y
+                const dz = Math.abs(playerPos.z - block.z);
+                
+                // Simple AABB collision detection
+                if (dx < playerRadius + 0.6 && 
+                    dy < playerHeight/2 + 0.6 && 
+                    dz < playerRadius + 0.6) {
+                    
+                    // Determine which side of the block we're colliding with
+                    const overlapX = Math.max(0, (playerRadius + 1) - dx);
+                    const overlapY = Math.max(0, (playerHeight/2 + 1) - dy);
+                    const overlapZ = Math.max(0, (playerRadius + 1) - dz);
+                    
+                    // Resolve collision on the axis with least penetration
+                    if (overlapX < overlapY && overlapX < overlapZ) {
+                        // Horizontal X collision
+                        camera.position.x += playerPos.x > block.x ? overlapX : -overlapX;
+                    } else if (overlapZ < overlapX && overlapZ < overlapY) {
+                        // Horizontal Z collision
+                        camera.position.z += playerPos.z > block.z ? overlapZ : -overlapZ;
+                    } 
+                    // Vertical collisions are handled by gravity system
+                }
+            }
+        }
+
+        // Update player movement with relative direction controls and collision detection
+        function updatePlayer(delta) {
+            const speed = 5.0 * delta;
+            
+            // Apply gravity
+            velocityY += gravity * delta;
+            
+            // Calculate forward and right vectors based on camera rotation
+            const direction = new THREE.Vector3();
+            camera.getWorldDirection(direction);
+            direction.y = 0; // Keep movement horizontal
+            direction.normalize();
+            
+            const right = new THREE.Vector3();
+            right.crossVectors(new THREE.Vector3(0, 1, 0), direction).normalize();
+            
+            // Store previous position for collision resolution
+            const prevPosition = camera.position.clone();
+            
+            // Move player based on input (relative to view direction)
+            if (moveForward) {
+                camera.position.add(direction.clone().multiplyScalar(speed));
+            }
+            if (moveBackward) {
+                camera.position.sub(direction.clone().multiplyScalar(speed));
+            }
+            if (moveLeft) {
+                camera.position.sub(right.clone().multiplyScalar(speed));
+            }
+            if (moveRight) {
+                camera.position.add(right.clone().multiplyScalar(speed));
+            }
+            
+            // Apply vertical movement
+            camera.position.y += velocityY * delta;
+            
+            // Check for collisions and resolve them
+            checkCollisions();
+            
+            // Simple ground collision
+            const groundLevel = -1.2; // Adjusted for player height
+            if (camera.position.y < groundLevel) {
+                camera.position.y = groundLevel;
+                velocityY = 0;
+                canJump = true;
+            }
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const delta = Math.min(clock.getDelta(), 0.1); // Cap delta to prevent large jumps
+            
+            updatePlayer(delta);
+            updateMinimap();
+            
+            renderer.render(scene, camera);
+        }
+
+        // Start the game when page loads
+        window.onload = init;
+        setTimeout(() => {
+            animate();
+        }, 2500);
+    </script>
+</body>
+</html>
