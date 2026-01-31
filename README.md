@@ -1,0 +1,242 @@
+# CodeRunner IDE
+
+A powerful desktop IDE that connects to **local LLMs** (and cloud APIs) to write, debug, and execute code — all in one window. Built for developers who want to leverage AI coding assistants without sending their code to the cloud.
+
+![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Platform](https://img.shields.io/badge/Platform-macOS%20|%20Linux%20|%20Windows-lightgrey.svg)
+
+## Why CodeRunner?
+
+Most AI coding tools require cloud APIs. CodeRunner lets you use **your own local models** — keeping your code private, avoiding API costs, and working offline. It supports 8 different backends so you can use whatever hardware you have.
+
+## Features
+
+### Multi-Backend LLM Support
+
+Run AI models wherever makes sense for you:
+
+| Backend | Description | Best For |
+|---------|-------------|----------|
+| **Ollama** | Easy local model management | Quick setup, many models |
+| **GGUF** | llama.cpp quantized models | CPU inference, low VRAM |
+| **MLX** | Apple Silicon optimized | M1/M2/M3/M4 Macs |
+| **vLLM** | High-throughput inference | NVIDIA GPUs, production |
+| **Transformers** | HuggingFace models | Latest models, fine-tuning |
+| **Blackwell** | NVIDIA Blackwell/DGX | Cutting-edge NVIDIA hardware |
+| **Claude** | Anthropic API | Cloud fallback |
+| **OpenAI** | OpenAI API (GPT-4/5) | Cloud fallback |
+
+### Integrated Code Editor
+
+- **Syntax highlighting** for Python, JavaScript, HTML, and more
+- **Line numbers** with click-to-navigate
+- **Find & Replace** with regex support
+- **Diff view** for AI-suggested changes (accept/reject)
+- **One-click execution** — run Python or open HTML in browser
+
+### Smart Debugging
+
+- **Clickable error lines** — click an error to jump to the line
+- **Code structure analysis** — automatic import/function/class detection
+- **Flake8 integration** — lint checking built-in
+- **Security scanning** — detect common vulnerabilities
+- **Type checking** — optional mypy integration
+
+### RAG (Retrieval Augmented Generation)
+
+Give your local LLM context from your codebase:
+
+- **Index any folder** into ChromaDB vector database
+- **Automatic chunking** of code files
+- **Semantic search** to find relevant code
+- **Context injection** into prompts
+
+### Workflow Features
+
+- **Three-panel layout**: Chat | Code Editor | Debug Console
+- **Save/Load conversations** with full context
+- **Multiple system prompts**: Python, HTML/JS, Therapist, or custom
+- **Image analysis** (with multimodal models)
+- **Web search tool** (models can search the web)
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+# Core dependencies
+pip install ollama chromadb langchain-text-splitters langchain-community pillow requests
+
+# For document processing (optional)
+pip install unstructured pypdf docx2txt pandas
+
+# For GGUF models (optional)
+pip install llama-cpp-python
+
+# For MLX on Apple Silicon (optional)
+pip install mlx mlx-lm
+```
+
+### 2. Set Up API Keys (Optional)
+
+If using Claude or OpenAI backends, copy `.env.example` to `.env` and add your keys:
+
+```bash
+cp .env.example .env
+# Edit .env with your API keys
+```
+
+### 3. Run CodeRunner
+
+```bash
+python CodeRunner_IDE_Triton_1_28_26.py
+```
+
+### 4. Select Your Backend
+
+1. Choose a backend (Ollama, GGUF, MLX, etc.)
+2. Select a model from the dropdown
+3. Click "Load Model"
+4. Start chatting!
+
+## Usage Examples
+
+### Generate a Game
+
+```
+You: Write a Pac-Man clone in Python using PyGame
+```
+
+The AI will generate complete, runnable code. Click "Run" to execute it immediately.
+
+### Debug Existing Code
+
+1. Load your code into the IDE
+2. Run it and see errors in the Debug Console
+3. Click "Fix Selected" — the AI fixes the errors automatically
+
+### Add Features to Code
+
+```
+You: Add a high score system that persists to a JSON file
+```
+
+The AI understands your existing code and adds the feature.
+
+### Use RAG for Large Codebases
+
+1. Click "Index Folder" and select your project
+2. Enable "RAG" toggle
+3. Ask questions — the AI searches your codebase for context
+
+```
+You: How does the authentication system work?
+```
+
+## Supported Model Formats
+
+- **Ollama**: Any model from ollama.com/library
+- **GGUF**: Quantized models (Q4_K_M, Q5_K_M, Q8_0, etc.)
+- **MLX**: Apple Silicon optimized models from HuggingFace
+- **Safetensors**: Standard HuggingFace format
+
+### Recommended Models for Coding
+
+| Model | Size | Backend | Notes |
+|-------|------|---------|-------|
+| `qwen2.5-coder:32b` | 32B | Ollama | Excellent for code |
+| `deepseek-coder-v2` | 16B | Ollama | Great reasoning |
+| `codellama:34b` | 34B | GGUF | Classic coding model |
+| `Qwen/Qwen3-VL-Moe` | 480B | MLX/Transformers | Multimodal + code |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     CodeRunner IDE                          │
+├─────────────────┬─────────────────┬─────────────────────────┤
+│   Chat Panel    │   Code Editor   │    Debug Console        │
+│                 │                 │                         │
+│  [User Input]   │  [Your Code]    │  [Errors & Output]      │
+│  [AI Response]  │  [Line Numbers] │  [Click to Navigate]    │
+│  [Code Blocks]  │  [Syntax HL]    │  [Structure Analysis]   │
+└─────────────────┴─────────────────┴─────────────────────────┘
+         │                 │                    │
+         ▼                 ▼                    ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Backend Manager                          │
+├─────────┬─────────┬─────────┬─────────┬─────────┬──────────┤
+│ Ollama  │  GGUF   │   MLX   │  vLLM   │ Claude  │  OpenAI  │
+└─────────┴─────────┴─────────┴─────────┴─────────┴──────────┘
+```
+
+## Configuration
+
+### System Prompts
+
+CodeRunner includes optimized system prompts:
+
+- **Python Programmer**: PyGame games, structured code, console debugging
+- **HTML Programmer**: Canvas games, self-contained (no external files)
+- **Helpful Assistant**: General purpose
+- **Therapist**: Supportive conversation
+
+### Custom Prompts
+
+Edit the system message directly in the UI or modify the source:
+
+```python
+python_system_message = """You are an expert Python programmer..."""
+```
+
+## Troubleshooting
+
+### "Model not loading"
+
+- **Ollama**: Ensure `ollama serve` is running
+- **GGUF**: Check you have enough RAM (model size × 1.2)
+- **MLX**: Requires Apple Silicon Mac
+
+### "CUDA out of memory"
+
+- Use a smaller quantization (Q4 instead of Q8)
+- Reduce `max_tokens` in settings
+- Try CPU inference with GGUF
+
+### "Tkinter not found"
+
+```bash
+# macOS
+brew install python-tk
+
+# Ubuntu/Debian
+sudo apt-get install python3-tk
+
+# Windows
+# Tkinter is included with Python installer
+```
+
+## Contributing
+
+Contributions welcome! Areas of interest:
+
+- Additional backend support
+- UI/UX improvements
+- New system prompts for specific domains
+- Documentation and examples
+
+## License
+
+MIT License — use freely for personal and commercial projects.
+
+## Author
+
+**Jonathan M. Rothberg** — Inventor of fast DNA sequencing, ultrasound-on-a-chip (Butterfly), portable MRI (Hyperfine), and next-gen protein sequencing (Quantum-Si).
+
+- Twitter/X: [@jmrothberg](https://twitter.com/jmrothberg)
+- GitHub: [jmrothberg](https://github.com/jmrothberg)
+
+---
+
+*Built with the belief that local AI should be as powerful as cloud AI.*
