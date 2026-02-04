@@ -1314,11 +1314,20 @@ def detect_macos_and_find_mlx_models():
     if platform.system() != "Darwin":
         return None
 
-    # Use the absolute path for MLX_Models directory
-    mlx_models_dir = Path("/Users/jonathanrothberg/MLX_Models")
+    # Check multiple possible MLX_Models directory locations
+    possible_dirs = [
+        Path("/Users/jonathanrothberg/MLX_Models"),  # Original path
+        Path.home() / "MLX_Models",  # User's home directory
+    ]
 
-    # Check if MLX_Models directory exists
-    if not mlx_models_dir.exists() or not mlx_models_dir.is_dir():
+    mlx_models_dir = None
+    for dir_path in possible_dirs:
+        if dir_path.exists() and dir_path.is_dir():
+            mlx_models_dir = dir_path
+            break
+
+    # Check if any MLX_Models directory exists
+    if mlx_models_dir is None:
         return None
 
     # Find all model directories that actually contain safetensors files
@@ -1503,16 +1512,21 @@ def get_available_mlx_models():
         if not mlx_model:
             return []
 
-        # Use the absolute path for MLX_Models directory
-        mlx_models_dir = Path("/Users/jonathanrothberg/MLX_Models")
+        # Check multiple possible MLX_Models directory locations
+        possible_dirs = [
+            Path("/Users/jonathanrothberg/MLX_Models"),  # Original path
+            Path.home() / "MLX_Models",  # User's home directory
+        ]
 
-        # Get all model directories
         model_dirs = []
-        for item in mlx_models_dir.iterdir():
-            if item.is_dir():
-                safetensors_files = list(item.glob("*.safetensors"))
-                if safetensors_files:
-                    model_dirs.append(str(item))
+        for mlx_models_dir in possible_dirs:
+            if mlx_models_dir.exists() and mlx_models_dir.is_dir():
+                # Get all model directories from this location
+                for item in mlx_models_dir.iterdir():
+                    if item.is_dir():
+                        safetensors_files = list(item.glob("*.safetensors"))
+                        if safetensors_files:
+                            model_dirs.append(str(item))
 
         return model_dirs
 

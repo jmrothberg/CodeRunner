@@ -76,11 +76,25 @@ Give your local LLM context from your codebase:
 
 ### 1. Install Dependencies
 
+**Using Virtual Environment (Recommended):**
+
 ```bash
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
 # Install all dependencies
 pip install -r requirements.txt
 
-# Or install core dependencies manually
+# For latest MLX models on Apple Silicon (REQUIRED for newer models)
+pip install mlx mlx-metal sentencepiece
+pip install --no-deps git+https://github.com/ml-explore/mlx-lm.git@main
+```
+
+**Manual Installation (Without Virtual Environment):**
+
+```bash
+# Install core dependencies
 pip install ollama chromadb langchain-text-splitters langchain-community pillow requests python-dotenv
 
 # For GGUF models (optional)
@@ -89,9 +103,15 @@ pip install llama-cpp-python
 # For MLX on Apple Silicon (optional)
 pip install mlx mlx-lm
 
+# For latest MLX models - IMPORTANT: Install from GitHub for newer model support
+# Use this if you get "'list' object has no attribute 'keys'" error
+pip install --no-deps git+https://github.com/ml-explore/mlx-lm.git@main
+
 # For code intelligence (recommended)
 pip install jedi pygments flake8 black mypy bandit radon
 ```
+
+**Note:** The PyPI version of `mlx-lm` may not support newer model formats. Installing from GitHub main branch ensures compatibility with the latest MLX models.
 
 ### 2. Set Up API Keys (Optional)
 
