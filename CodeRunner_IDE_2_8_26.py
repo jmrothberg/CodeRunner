@@ -1862,8 +1862,8 @@ class IDEWindow:
         run_frame = Frame(toolbar)
         run_frame.pack(side=tk.LEFT, padx=(0, 5))
         
-        Button(run_frame, text="Run", command=self.run_current_code, bg="lightblue").pack(side=tk.LEFT)
-        self.run_fix_btn = Button(run_frame, text="Run & Fix", command=self.run_and_auto_fix, bg="gold",
+        Button(run_frame, text="Run (F5)", command=self.run_current_code, bg="lightblue").pack(side=tk.LEFT)
+        self.run_fix_btn = Button(run_frame, text="Run & Fix (F6)", command=self.run_and_auto_fix, bg="gold",
                font=("TkDefaultFont", 9, "bold"))
         self.run_fix_btn.pack(side=tk.LEFT, padx=(3, 0))
         self.timed_execution = BooleanVar(value=True)  # Default to timed execution
@@ -1872,18 +1872,18 @@ class IDEWindow:
         # Separator
         Frame(toolbar, width=2, bg="gray").pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
-        Button(toolbar, text="Ask LLM to Fix", command=self.fix_current_code, bg="lightyellow").pack(side=tk.LEFT, padx=(0, 5))
+        Button(toolbar, text="Ask LLM to Fix (type problem in Chat first)", command=self.fix_current_code, bg="lightyellow").pack(side=tk.LEFT, padx=(0, 5))
 
         # Separator before Accept/Reject
         Frame(toolbar, width=2, bg="gray").pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
         # Accept/Reject buttons (disabled until diff is shown)
-        self.accept_btn = Button(toolbar, text="Accept", command=self.accept_changes,
+        self.accept_btn = Button(toolbar, text="Accept Fix", command=self.accept_changes,
                                  bg="lightgreen", fg="darkgreen", state=tk.DISABLED,
                                  font=("TkDefaultFont", 9, "bold"))
         self.accept_btn.pack(side=tk.LEFT, padx=(0, 3))
 
-        self.reject_btn = Button(toolbar, text="Reject", command=self.reject_changes,
+        self.reject_btn = Button(toolbar, text="Reject Fix", command=self.reject_changes,
                                  bg="lightpink", fg="darkred", state=tk.DISABLED,
                                  font=("TkDefaultFont", 9, "bold"))
         self.reject_btn.pack(side=tk.LEFT, padx=(0, 5))
@@ -5471,8 +5471,8 @@ GREAT GRAPHICS & ANIMATION:
         chat_header_frame = Frame(chat_frame)
         chat_header_frame.pack(fill=tk.X, pady=(0, 5))
 
-        # IDE buttons moved to the left
-        Button(chat_header_frame, text="Move to IDE", command=self.move_code_to_ide, bg="lightgreen").pack(side=tk.LEFT, padx=2)
+        # IDE buttons
+        Button(chat_header_frame, text="Move Code to IDE", command=self.move_code_to_ide, bg="lightgreen").pack(side=tk.LEFT, padx=2)
         Button(chat_header_frame, text="Open IDE", command=self.open_ide_window, bg="lightblue").pack(side=tk.LEFT, padx=2)
 
         Label(chat_header_frame, text="Chat History:").pack(side=tk.LEFT, padx=(10, 0))
@@ -10490,9 +10490,11 @@ Standard Error:
             )
 
     def move_code_to_ide(self):
-        """Move selected code or last code block to IDE window"""
+        """Move selected code or last code block to IDE window.
+        If the code contains SEARCH/REPLACE blocks and the IDE already has content,
+        apply them as a diff instead of replacing everything."""
         code_to_move = None
-        
+
         # First try to get selected text
         try:
             selected_text = self.chat_display.get(tk.SEL_FIRST, tk.SEL_LAST)
@@ -10500,17 +10502,35 @@ Standard Error:
                 code_to_move = selected_text.strip()
         except tk.TclError:
             pass
-        
+
         # If no selection, try to get last code block
         if not code_to_move:
             code_to_move = self._find_last_code_block()
-        
-        if code_to_move:
-            self.ide_window.set_content(code_to_move, None)  # No filename when moving from chat
-            self.ide_window.show_window()
-            self.show_copy_status("Code moved to IDE window")
-        else:
+
+        if not code_to_move:
             self.show_copy_status("No code found to move to IDE")
+            return
+
+        # Check if the content is SEARCH/REPLACE blocks rather than a full program.
+        # If the IDE already has code, apply them as edits instead of clobbering.
+        import re
+        has_sr = re.search(r'<{6,7}\s*SEARCH', code_to_move) or re.search(r'SEARCH', code_to_move)
+        current_ide = self.ide_window.get_content() if self.ide_window else ""
+        if has_sr and current_ide.strip():
+            # Try to apply SEARCH/REPLACE to the existing IDE content
+            result = self._apply_search_replace_blocks(current_ide, code_to_move)
+            if result and result.strip() != current_ide.strip():
+                self.propose_code_changes(result)
+                self.show_copy_status("SEARCH/REPLACE edits applied as diff - Accept or Reject")
+                return
+            # If blocks didn't apply, warn instead of clobbering
+            self.show_copy_status("Could not apply edits — check the diff manually")
+            return
+
+        # Normal case: replace IDE content with the full code
+        self.ide_window.set_content(code_to_move, None)
+        self.ide_window.show_window()
+        self.show_copy_status("Code moved to IDE window")
             
     def propose_code_changes(self, proposed_code):
         """Propose code changes to the IDE window for user review"""
@@ -10528,9 +10548,13 @@ Standard Error:
         Returns the modified code, or None if no SEARCH/REPLACE blocks were found.
         """
         import re
+        # Strip markdown code fences so blocks inside ```html ... ``` are found
+        cleaned = re.sub(r'```(?:python|py|html|javascript|js)?\s*\n', '', message)
+        cleaned = cleaned.replace('```', '')
+
         # Match <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE blocks
         pattern = r'<{6,7}\s*SEARCH\s*\n(.*?)\n={6,7}\s*\n(.*?)\n>{6,7}\s*REPLACE'
-        blocks = re.findall(pattern, message, re.DOTALL)
+        blocks = re.findall(pattern, cleaned, re.DOTALL)
 
         if not blocks:
             return None
