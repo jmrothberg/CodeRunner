@@ -1,6 +1,6 @@
 # CodeRunner IDE
 
-A powerful desktop IDE that connects to **local LLMs** (and cloud APIs) to write, debug, and execute code — all in one window. Built for developers who want to leverage AI coding assistants without sending their code to the cloud.
+A desktop IDE that connects to **local LLMs** (and cloud APIs) to write, debug, and iterate on code — all in one window. Type what you want, the LLM writes it, you press Run & Fix, and it works. No cloud required.
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
@@ -14,15 +14,108 @@ These games were generated in **one shot** by local LLMs using CodeRunner:
 |------|----------|------------|
 | **Space Invaders** | [Play](https://jmrothberg.github.io/Code_Runner/Generated_games/Invaders_Qwen3-Coder_next_BESTEVER.html) | Qwen3-Coder |
 
+---
+
+## Quick Start
+
+### 1. Install
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Set Up API Keys (optional — only for cloud backends)
+
+```bash
+cp .env.example .env
+# Edit .env with your Anthropic/OpenAI keys
+```
+
+### 3. Run
+
+```bash
+python CodeRunner_IDE_2_8_26.py
+```
+
+### 4. Use It
+
+1. Select a backend and model (top of main window)
+2. Switch to **Python Programmer** or **HTML Programmer** mode
+3. Type in the chat: *"Write a Space Invaders game in Python using Pygame"*
+4. Click **Move to IDE**
+5. Press **F6** (Run & Fix)
+6. If it crashes, the LLM auto-fixes it. You see a diff. Press **Ctrl+Enter** to Accept.
+7. If it runs but something is wrong, type what's wrong in chat and click **Ask LLM to Fix**
+
+That's the whole workflow.
+
+---
+
 ## Why CodeRunner?
 
-Most AI coding tools require cloud APIs. CodeRunner lets you use **your own local models** — keeping your code private, avoiding API costs, and working offline. It supports 8 different backends so you can use whatever hardware you have.
+Most AI coding tools require cloud APIs. CodeRunner lets you use **your own local models** — keeping your code private, avoiding API costs, and working offline. It supports 8 backends so you can use whatever hardware you have.
+
+---
+
+## The Two Buttons That Matter
+
+| Button | Shortcut | What It Does |
+|--------|----------|--------------|
+| **Run & Fix** | `F6` | Runs your code. If it crashes, automatically sends the error to the LLM, gets a fix, and shows you a color-coded diff. |
+| **Ask LLM to Fix** | *(toolbar)* | Code runs but does the wrong thing? Type what's wrong in the chat box, then click this. LLM reads your whole file and returns only the changes. |
+
+There's also **Run** (`F5`) if you just want to run without involving the LLM.
+
+---
+
+## The Workflow
+
+```
+1. Ask the LLM to write a game in chat
+2. Click "Move to IDE" to put the code in the editor
+3. Press F6 (Run & Fix)
+4. If it crashes  ->  LLM auto-fixes  ->  you see the diff  ->  Accept or Reject
+5. If it runs but something is wrong:
+     a. Type what's wrong in the chat box ("the ball goes through the paddle")
+     b. Click "Ask LLM to Fix"
+     c. LLM fixes it  ->  you see the diff  ->  Accept or Reject
+6. Repeat until it works
+```
+
+**You don't need to read the code or find the bug. That's the LLM's job.**
+
+Just describe what's wrong in plain English. The LLM reads your entire program, figures out which functions are broken, and returns only the changes.
+
+### First Shot vs. Fixing
+
+| Phase | What You Do | What the LLM Returns |
+|-------|-------------|---------------------|
+| **First shot** | Ask the LLM to write code from scratch | Full program |
+| **Fixing** | Describe what's wrong, click "Ask LLM to Fix" | Only the changed lines (SEARCH/REPLACE blocks) |
+
+The **"Fast edits (only changed parts)"** checkbox (ON by default) tells the LLM to return targeted edits instead of regenerating the whole file.
+
+### Accept & Reject
+
+When the LLM proposes changes, two buttons light up in the IDE toolbar:
+
+| Button | Shortcut | What It Does |
+|--------|----------|--------------|
+| **Accept** | `Ctrl+Enter` | Applies the LLM's changes |
+| **Reject** | `Escape` | Throws them away, restores your original |
+
+The diff is color-coded:
+- **Green** = new code added
+- **Yellow** = code changed
+- **Red** = code removed
+
+The editor is read-only while showing the diff so you can't accidentally edit during review.
+
+---
 
 ## Features
 
 ### Multi-Backend LLM Support
-
-Run AI models wherever makes sense for you:
 
 | Backend | Description | Best For |
 |---------|-------------|----------|
@@ -32,129 +125,173 @@ Run AI models wherever makes sense for you:
 | **vLLM** | High-throughput inference | NVIDIA GPUs, production |
 | **Transformers** | HuggingFace models | Latest models, fine-tuning |
 | **Blackwell** | NVIDIA Blackwell/DGX | Cutting-edge NVIDIA hardware |
-| **Claude** | Anthropic API | Cloud fallback |
+| **Claude** | Anthropic API | Best cloud coding model |
 | **OpenAI** | OpenAI API (GPT-4/5) | Cloud fallback |
 
-### Integrated Code Editor
+### SEARCH/REPLACE Block Editing
 
-- **Syntax highlighting** for Python, JavaScript, HTML, and more
-- **Line numbers** with click-to-navigate
-- **Find & Replace** with regex support
-- **Diff view** for AI-suggested changes (accept/reject)
-- **One-click execution** — run Python or open HTML in browser
+When fixing code, the LLM returns only the parts that changed using a structured format:
 
-### Smart Debugging & Code Intelligence
+```
+<<<<<<< SEARCH
+exact lines from the original code
+=======
+replacement lines
+>>>>>>> REPLACE
+```
 
-- **Clickable error lines** — click an error to jump to the line
-- **Code structure analysis** — automatic import/function/class detection
-- **Flake8 integration** — real-time lint checking
-- **Security scanning** — Bandit integration for vulnerability detection
-- **Type checking** — MyPy integration for static analysis
-- **Complexity analysis** — Radon metrics for code quality
-- **Code formatting** — Black formatter built-in
-- **Code completion** — Jedi-powered intelligent suggestions
-- **Enhanced syntax highlighting** — Pygments-based coloring
+CodeRunner automatically parses these blocks and applies them to your file — you never have to manually find and replace. If an exact match fails, fuzzy matching kicks in. This is what makes the fix loop fast: the LLM only sends a few lines instead of regenerating 500+ lines.
+
+### Token Counters & Speed Metrics
+
+The chat header shows real-time stats for every message:
+
+```
+00:42   In:1,234 Out:567 | Total In:5,678 Out:2,345  (42.3 tok/s)
+```
+
+- **In / Out**: Input and output tokens for the last message
+- **Total In / Out**: Running session totals (reset on `/restart`)
+- **tok/s**: Output generation speed
+
+### Integrated Code Editor (IDE Window)
+
+- Syntax highlighting (Python, JavaScript, HTML)
+- Line numbers with click-to-navigate
+- Find & Replace (`Ctrl+F`)
+- Inline diff view with Accept/Reject
+- Run & Fix (`F6`) — the main workflow button
+- Welcome message on first open with quick-start instructions
+- F1 opens beginner-focused help
+
+### Smart Debugging
+
+- **Clickable error lines** in the debug console — click to jump to the line
+- **Browser error capture** — catches JavaScript errors from HTML games via a local error server
+- **Auto-fix pipeline** — Run & Fix detects errors, sends them to LLM, shows the diff, all in one keystroke
+
+### Visual Feedback
+
+- Run & Fix button flashes orange while running
+- Status label shows bold red **"Fixing..."** when the LLM is working
+- Accept button flashes green when a diff arrives
+- IDE window comes to front automatically when the diff is ready
 
 ### RAG (Retrieval Augmented Generation)
 
 Give your local LLM context from your codebase:
 
-- **Index any folder** into ChromaDB vector database
-- **Automatic chunking** of code files
-- **Semantic search** to find relevant code
-- **Context injection** into prompts
-
-### Workflow Features
-
-- **Three-panel layout**: Chat | Code Editor | Debug Console
-- **Save/Load conversations** with full context
-- **Multiple system prompts**: Python, HTML/JS, Therapist, or custom
-- **Image analysis** (with multimodal models)
-- **Web search tool** (models can search the web)
-
-## Quick Start
-
-### 1. Install Dependencies
-
-```bash
-# Install all dependencies
-pip install -r requirements.txt
-
-# Or install core dependencies manually
-pip install ollama chromadb langchain-text-splitters langchain-community pillow requests python-dotenv
-
-# For GGUF models (optional)
-pip install llama-cpp-python
-
-# For MLX on Apple Silicon (optional)
-pip install mlx mlx-lm
-
-# For code intelligence (recommended)
-pip install jedi pygments flake8 black mypy bandit radon
-```
-
-### 2. Set Up API Keys (Optional)
-
-If using Claude or OpenAI backends, copy `.env.example` to `.env` and add your keys:
-
-```bash
-cp .env.example .env
-# Edit .env with your API keys
-```
-
-### 3. Run CodeRunner
-
-```bash
-python CodeRunner_IDE_Triton_1_30_26.py
-```
-
-### 4. Select Your Backend
-
-1. Choose a backend (Ollama, GGUF, MLX, etc.)
-2. Select a model from the dropdown
-3. Click "Load Model"
-4. Start chatting!
-
-## Usage Examples
-
-### Generate a Game
-
-```
-You: Write a Pac-Man clone in Python using PyGame
-```
-
-The AI will generate complete, runnable code. Click "Run" to execute it immediately.
-
-### Debug Existing Code
-
-1. Load your code into the IDE
-2. Run it and see errors in the Debug Console
-3. Click "Fix Selected" — the AI fixes the errors automatically
-
-### Add Features to Code
-
-```
-You: Add a high score system that persists to a JSON file
-```
-
-The AI understands your existing code and adds the feature.
-
-### Use RAG for Large Codebases
-
 1. Click "Index Folder" and select your project
 2. Enable "RAG" toggle
-3. Ask questions — the AI searches your codebase for context
+3. Ask questions — the AI searches your codebase for relevant context
+
+### Game Presets
+
+15 built-in game prompts for one-shot generation:
+
+Space Invaders, Asteroids, Breakout, Pac-Man, Frogger, Centipede, Defender, Flappy Birds, Doom-Style FPS, Mario Kart, Mr. Do!, Minecraft, Super Mario Bros, Missile Command, Q*bert
+
+Select from the dropdown and hit Send.
+
+### Temperature Presets
+
+| Preset | Value | Use For |
+|--------|-------|---------|
+| Code Exact | 0.15 | Precise code changes |
+| Precise | 0.2 | Bug fixes |
+| Game | 0.35 | Game development (default for programmer modes) |
+| Balanced | 0.5 | General coding |
+| Creative | 0.8 | Brainstorming, creative writing |
+
+---
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `F1` | Open help |
+| `F5` | Run code |
+| `F6` | Run & Fix (run, catch errors, auto-fix) |
+| `Ctrl+Enter` | Accept LLM's changes |
+| `Escape` | Reject LLM's changes |
+| `Ctrl+S` | Save file |
+| `Ctrl+N` | New file |
+| `Ctrl+O` | Open file |
+| `Ctrl+F` | Find text |
+| `Ctrl+G` | Go to line |
+
+Mac users: `Cmd` works in place of `Ctrl` for all shortcuts.
+
+---
+
+## Architecture
 
 ```
-You: How does the authentication system work?
++----------------------------------------------------------------+
+|  IDE Toolbar:                                                   |
+|  [New][Save][Load][Find] | [Run][Run&Fix][Timed] |             |
+|  [Ask LLM to Fix] | [Accept][Reject]          Status: Ready    |
++------------------+-----------------+---------------------------+
+|   Chat Panel     |   Code Editor   |    Debug Console           |
+|                  |                 |                            |
+|  [User Input]    |  [Your Code]    |  [Errors & Output]         |
+|  [AI Response]   |  [Diff View]    |  [Click to Navigate]       |
+|  [Move to IDE]   |  [Accept/Rej]   |  [Browser Errors]          |
++------------------+-----------------+---------------------------+
+         |                 |                    |
+         v                 v                    v
++----------------------------------------------------------------+
+|                    Backend Manager                              |
++---------+---------+---------+---------+---------+--------------+
+| Ollama  |  GGUF   |   MLX   |  vLLM   | Claude  |  OpenAI     |
++---------+---------+---------+---------+---------+--------------+
 ```
 
-## Supported Model Formats
+### Chat Header
 
-- **Ollama**: Any model from ollama.com/library
-- **GGUF**: Quantized models (Q4_K_M, Q5_K_M, Q8_0, etc.)
-- **MLX**: Apple Silicon optimized models from HuggingFace
-- **Safetensors**: Standard HuggingFace format
+```
+[Move to IDE] [Open IDE]  Chat History:  00:42  In:1,234 Out:567 | Total In:5,678 Out:2,345 (42.3 tok/s)
+```
+
+### Context Menu (Right-Click in Editor)
+
+- **Code**: Run, Run & Fix, Fix with LLM
+- **Review**: Accept Changes, Reject Changes
+- **Edit**: Undo, Redo, Cut, Copy, Paste
+- **File**: New, Open, Save, Save As, Move to Chat
+- **Search**: Find Text, Go to Line
+- **View**: Refresh Highlighting, Update Line Numbers
+- **Quick Actions**: Run & Fix, Accept, Reject, Save
+
+---
+
+## System Prompts
+
+| Mode | Description |
+|------|-------------|
+| **Python Programmer** | PyGame games, structured code, console debugging, SEARCH/REPLACE fixes |
+| **HTML Programmer** | Canvas games, self-contained (no external files), SEARCH/REPLACE fixes |
+| **Helpful Assistant** | General purpose conversation |
+| **Therapist** | Supportive conversation |
+
+All programmer modes include a base instruction to return SEARCH/REPLACE blocks when fixing code. The "Fast edits" checkbox adds detailed format instructions on top.
+
+Custom prompts can be edited directly in the UI via the system prompt editor.
+
+---
+
+## Configuration
+
+### API Keys
+
+Store in `.env` (never committed to git):
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+```
+
+Or place them in `anthropic_key.txt` / `openai_key.txt` next to the script.
 
 ### Recommended Models for Coding
 
@@ -163,54 +300,48 @@ You: How does the authentication system work?
 | `qwen2.5-coder:32b` | 32B | Ollama | Excellent for code |
 | `deepseek-coder-v2` | 16B | Ollama | Great reasoning |
 | `codellama:34b` | 34B | GGUF | Classic coding model |
-| `Qwen/Qwen3-VL-Moe` | 480B | MLX/Transformers | Multimodal + code |
+| `Qwen/Qwen3-Coder` | — | MLX/Ollama | Latest Qwen coder |
 
-## Architecture
+---
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     CodeRunner IDE                          │
-├─────────────────┬─────────────────┬─────────────────────────┤
-│   Chat Panel    │   Code Editor   │    Debug Console        │
-│                 │                 │                         │
-│  [User Input]   │  [Your Code]    │  [Errors & Output]      │
-│  [AI Response]  │  [Line Numbers] │  [Click to Navigate]    │
-│  [Code Blocks]  │  [Syntax HL]    │  [Structure Analysis]   │
-└─────────────────┴─────────────────┴─────────────────────────┘
-         │                 │                    │
-         ▼                 ▼                    ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Backend Manager                          │
-├─────────┬─────────┬─────────┬─────────┬─────────┬──────────┤
-│ Ollama  │  GGUF   │   MLX   │  vLLM   │ Claude  │  OpenAI  │
-└─────────┴─────────┴─────────┴─────────┴─────────┴──────────┘
+## Installation Details
+
+### Core (required)
+
+```bash
+pip install ollama requests pillow python-dotenv
 ```
 
-## Configuration
+### RAG (optional)
 
-### System Prompts
-
-CodeRunner includes optimized system prompts:
-
-- **Python Programmer**: PyGame games, structured code, console debugging
-- **HTML Programmer**: Canvas games, self-contained (no external files)
-- **Helpful Assistant**: General purpose
-- **Therapist**: Supportive conversation
-
-### Custom Prompts
-
-Edit the system message directly in the UI or modify the source:
-
-```python
-python_system_message = """You are an expert Python programmer..."""
+```bash
+pip install chromadb langchain-text-splitters langchain-community
 ```
+
+### Local Backends (install as needed)
+
+```bash
+pip install llama-cpp-python       # GGUF models
+pip install mlx mlx-lm             # Apple Silicon (macOS only)
+pip install vllm                   # NVIDIA GPU acceleration
+pip install transformers torch accelerate  # HuggingFace models
+```
+
+### Code Intelligence (optional)
+
+```bash
+pip install jedi pygments flake8 black
+pip install mypy bandit radon      # Advanced analysis
+```
+
+---
 
 ## Troubleshooting
 
 ### "Model not loading"
 
 - **Ollama**: Ensure `ollama serve` is running
-- **GGUF**: Check you have enough RAM (model size × 1.2)
+- **GGUF**: Check you have enough RAM (model size x 1.2)
 - **MLX**: Requires Apple Silicon Mac
 
 ### "CUDA out of memory"
@@ -228,9 +359,26 @@ brew install python-tk
 # Ubuntu/Debian
 sudo apt-get install python3-tk
 
-# Windows
-# Tkinter is included with Python installer
+# Windows — included with Python installer
 ```
+
+---
+
+## File Structure
+
+```
+Code_Runner/
+  CodeRunner_IDE_2_8_26.py   # Main application (single file)
+  requirements.txt           # Python dependencies
+  config.json                # Saved configuration
+  .env.example               # API key template
+  .env                       # Your API keys (not committed)
+  .gitignore                 # Git ignore rules
+  Generated_games/           # Games generated by CodeRunner
+  README.md                  # This file
+```
+
+---
 
 ## Contributing
 

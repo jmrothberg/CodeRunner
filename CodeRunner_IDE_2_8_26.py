@@ -1,17 +1,20 @@
 # =============================================================================
-# CodeRunner IDE - Multi-platform AI Chat & Code Editor
+# CodeRunner IDE v2.8.26 - Multi-platform AI Chat & Code Editor
 # =============================================================================
 # Supports: DGX-Spark (Blackwell), Mac (MLX), x64 Linux/Windows
 #
-# Features:
-# - Multi-backend AI chat (Ollama, Transformers, Claude, OpenAI, GGUF, vLLM, MLX)
-# - Integrated code editor with syntax highlighting
-# - Three-window system: Chat, System Console, Debug Console
-# - RAG with ChromaDB for document-augmented responses
-# - Smart debugging with clickable error line numbers
-# - Code execution and testing
+# Workflow:  Chat -> Move to IDE -> Run & Fix (F6) -> Accept/Reject -> repeat
 #
-# Installation: pip install -r CodeRunner_requirements.txt
+# Features:
+# - 8 LLM backends: Ollama, Transformers, Claude, OpenAI, GGUF, vLLM, MLX, Blackwell
+# - Cursor-like Run & Fix loop with SEARCH/REPLACE block editing
+# - Inline diff view with Accept (Ctrl+Enter) / Reject (Escape)
+# - Token counters, speed metrics, and response timer
+# - RAG with ChromaDB for document-augmented responses
+# - Smart debugging: clickable error lines, browser error capture
+# - 15 built-in game presets for one-shot generation
+#
+# Installation: pip install -r requirements.txt
 # =============================================================================
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -55,6 +58,7 @@ import io
 import uuid
 import glob
 import time
+import difflib
 
 # Try to import llama-cpp-python
 try:
@@ -242,7 +246,11 @@ model = 'qwen3:235b'
 model = 'qwen3:235b-a22b-q8_0'
 model = 'llama4:17b-maverick-128e-instruct-q8_0'
 
-# System prompts for different modes
+# =============================================================================
+# SYSTEM PROMPTS — one per radio-button mode in the UI
+# Python/HTML prompts include SEARCH/REPLACE instruction for the fix workflow.
+# =============================================================================
+
 # Therapist system message - helpful and supportive
 therapist_system_message = """You are a compassionate, professional therapist. Your role is to provide empathetic, non-judgmental support to help users work through their challenges and emotions.
 
@@ -272,10 +280,11 @@ If you don't know the answer to a question, simply say so rather than making up 
 
 # Python programmer system message - not encoded for easy editing
 python_system_message = """You are an expert Python programmer. You excel at:
-1. Implementing game applications using PyGame.  
+1. Implementing game applications using PyGame.
 2. Structuring code for readability and maintainability by an LLM.
 3. Send key information to the console that can be used to debug the code.
 4. Use your full knowledge of the requested application, do NOT LEAVE KEY ELEMENTS OUT for simplicity.
+5. When asked to fix code, return ONLY the changes as SEARCH/REPLACE blocks — not the entire file.
 """
 
 # HTML programmer system message
@@ -284,8 +293,9 @@ html_system_message = """You are an expert HTML/JavaScript programmer. You excel
 2. Structuring code for readability and maintainability by an LLM.
 3. Send key information to the console that can be used to debug the code.
 4. Use your full knowledge of requested application, do NOT LEAVE KEY ELEMENTS OUT for simplicity.
-5. DO NOT USE EXTERNAL SOUND FILES UNLESS specified by the user JUST comment in code where they would go, but make sure works without.
-6. DO NOT USE EXTERNAL IMAGE FILES create YOUR OWN images using Canvas drawing.
+5. When asked to fix code, return ONLY the changes as SEARCH/REPLACE blocks — not the entire file.
+6. DO NOT USE EXTERNAL SOUND FILES UNLESS specified by the user JUST comment in code where they would go, but make sure works without.
+7. DO NOT USE EXTERNAL IMAGE FILES create YOUR OWN images using Canvas drawing.
 """
 
 # Claude API configuration - reads from environment variable or file
@@ -1314,11 +1324,20 @@ def detect_macos_and_find_mlx_models():
     if platform.system() != "Darwin":
         return None
 
-    # Use the absolute path for MLX_Models directory
-    mlx_models_dir = Path("/Users/jonathanrothberg/MLX_Models")
+    # Check multiple possible MLX_Models directory locations
+    possible_dirs = [
+        Path("/Users/jonathanrothberg/MLX_Models"),  # Original path
+        Path.home() / "MLX_Models",  # User's home directory
+    ]
 
-    # Check if MLX_Models directory exists
-    if not mlx_models_dir.exists() or not mlx_models_dir.is_dir():
+    mlx_models_dir = None
+    for dir_path in possible_dirs:
+        if dir_path.exists() and dir_path.is_dir():
+            mlx_models_dir = dir_path
+            break
+
+    # Check if any MLX_Models directory exists
+    if mlx_models_dir is None:
         return None
 
     # Find all model directories that actually contain safetensors files
@@ -1503,16 +1522,20 @@ def get_available_mlx_models():
         if not mlx_model:
             return []
 
-        # Use the absolute path for MLX_Models directory
-        mlx_models_dir = Path("/Users/jonathanrothberg/MLX_Models")
+        # Check multiple possible MLX_Models directory locations
+        possible_dirs = [
+            Path("/Users/jonathanrothberg/MLX_Models"),  # Original path
+            Path.home() / "MLX_Models",  # User's home directory
+        ]
 
-        # Get all model directories
         model_dirs = []
-        for item in mlx_models_dir.iterdir():
-            if item.is_dir():
-                safetensors_files = list(item.glob("*.safetensors"))
-                if safetensors_files:
-                    model_dirs.append(str(item))
+        for mlx_models_dir in possible_dirs:
+            if mlx_models_dir.exists() and mlx_models_dir.is_dir():
+                for item in mlx_models_dir.iterdir():
+                    if item.is_dir():
+                        safetensors_files = list(item.glob("*.safetensors"))
+                        if safetensors_files:
+                            model_dirs.append(str(item))
 
         return model_dirs
 
@@ -1599,6 +1622,10 @@ def get_openai_models():
     except Exception:
         return []
 
+
+# =============================================================================
+# BROWSER ERROR SERVER — captures JS errors from HTML games via HTTP POST
+# =============================================================================
 
 class BrowserErrorServer:
     """Simple HTTP server to capture browser console errors and send them to debug console"""
@@ -1726,6 +1753,10 @@ class BrowserErrorServer:
             print(f"Error server failed: {e}")
 
 
+# =============================================================================
+# IDE WINDOW — code editor with toolbar, diff view, Run & Fix, Accept/Reject
+# =============================================================================
+
 class IDEWindow:
     """Simple IDE window for code editing - streamlined interface
     
@@ -1797,9 +1828,9 @@ class IDEWindow:
         instructions_frame.pack(fill=tk.X, pady=(0, 5))
         instructions_frame.pack_propagate(False)
         
-        # Brief instructions label
-        instructions_text = "💡 DEBUG: Select variable → Click Debug | FORMAT: Click to clean code | HOVER buttons for help tooltips!"
-        Label(instructions_frame, text=instructions_text, bg="lightgray", fg="darkblue", 
+        # Brief keyboard shortcuts reference
+        instructions_text = "F5=Run | F6=Run & Fix | Ctrl+Enter=Accept | Esc=Reject | Ctrl+S=Save"
+        Label(instructions_frame, text=instructions_text, bg="lightgray", fg="darkblue",
               font=("TkDefaultFont", 9)).pack(side=tk.LEFT, padx=5, pady=2)
         
         # Help button on the right
@@ -1832,120 +1863,34 @@ class IDEWindow:
         run_frame.pack(side=tk.LEFT, padx=(0, 5))
         
         Button(run_frame, text="Run", command=self.run_current_code, bg="lightblue").pack(side=tk.LEFT)
+        self.run_fix_btn = Button(run_frame, text="Run & Fix", command=self.run_and_auto_fix, bg="gold",
+               font=("TkDefaultFont", 9, "bold"))
+        self.run_fix_btn.pack(side=tk.LEFT, padx=(3, 0))
         self.timed_execution = BooleanVar(value=True)  # Default to timed execution
         Checkbutton(run_frame, text="Timed", variable=self.timed_execution, font=("TkDefaultFont", 9)).pack(side=tk.LEFT, padx=(2, 0))
         
-        # Separator for enhanced features
-        Frame(toolbar, width=2, bg="gray").pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        
-        # Enhanced IDE Features section
-        enhanced_frame = Frame(toolbar)
-        enhanced_frame.pack(side=tk.LEFT, padx=(0, 5))
-        
-        # Label for enhanced features
-        Label(enhanced_frame, text="🚀 Enhanced:", font=("TkDefaultFont", 8)).pack(side=tk.LEFT, padx=(0, 3))
-        
-        # Autocomplete button (if Jedi available)
-        if JEDI_AVAILABLE:
-            btn = Button(enhanced_frame, text="Complete", command=self.show_autocomplete, 
-                   bg="lightgreen", font=("TkDefaultFont", 9), width=8)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "Trigger autocomplete\nShortcut: Ctrl+Space")
-        
-        # Format code button (if Black available)
-        if BLACK_AVAILABLE:
-            btn = Button(enhanced_frame, text="Format", command=self.format_code_with_black, 
-                   bg="lightyellow", font=("TkDefaultFont", 9), width=6)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "Format code with Black\nMakes code PEP 8 compliant")
-        
-        # Linting toggle button (if Flake8 available)
-        if FLAKE8_AVAILABLE:
-            self.linting_enabled = BooleanVar(value=True)
-            self.lint_button = Button(enhanced_frame, text="Lint: ON", command=self.toggle_linting, 
-                                    bg="lightcyan", font=("TkDefaultFont", 9), width=8)
-            self.lint_button.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(self.lint_button, "Toggle error checking\nUnderlines errors in red")
-        
-        # Refresh highlighting button
-        if PYGMENTS_AVAILABLE:
-            btn = Button(enhanced_frame, text="Refresh", command=self.refresh_highlighting, 
-                   bg="lavender", font=("TkDefaultFont", 9), width=7)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "Refresh syntax colors")
-        
         # Separator
         Frame(toolbar, width=2, bg="gray").pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        
-        # NOTE: Removed IDE "Clear" toolbar button to avoid redundancy with Restart Chat.
-        # Keeping the underlying clear_ide method and other console clear buttons intact.
-        # Button(toolbar, text="Clear", command=self.clear_ide, bg="lightcoral").pack(side=tk.LEFT, padx=(0, 5))
+
         Button(toolbar, text="Ask LLM to Fix", command=self.fix_current_code, bg="lightyellow").pack(side=tk.LEFT, padx=(0, 5))
-        
+
+        # Separator before Accept/Reject
+        Frame(toolbar, width=2, bg="gray").pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
+        # Accept/Reject buttons (disabled until diff is shown)
+        self.accept_btn = Button(toolbar, text="Accept", command=self.accept_changes,
+                                 bg="lightgreen", fg="darkgreen", state=tk.DISABLED,
+                                 font=("TkDefaultFont", 9, "bold"))
+        self.accept_btn.pack(side=tk.LEFT, padx=(0, 3))
+
+        self.reject_btn = Button(toolbar, text="Reject", command=self.reject_changes,
+                                 bg="lightpink", fg="darkred", state=tk.DISABLED,
+                                 font=("TkDefaultFont", 9, "bold"))
+        self.reject_btn.pack(side=tk.LEFT, padx=(0, 5))
+
         # Status label
         self.status_label = Label(toolbar, text="Ready", fg="blue")
         self.status_label.pack(side=tk.RIGHT)
-        
-        # SECOND ROW TOOLBAR - Analysis Tools
-        toolbar2 = Frame(toolbar_container, bg="lightgray", relief="groove", borderwidth=1)
-        toolbar2.pack(fill=tk.X, pady=(2, 0))
-        
-        # Advanced Analysis Tools section
-        analysis_frame = Frame(toolbar2, bg="lightgray")
-        analysis_frame.pack(side=tk.LEFT, padx=(5, 5), pady=2)
-        
-        Label(analysis_frame, text="🔬 Analysis Tools:", font=("TkDefaultFont", 9, "bold"), bg="lightgray").pack(side=tk.LEFT, padx=(0, 5))
-        
-        # AST Analysis button
-        if AST_AVAILABLE:
-            btn = Button(analysis_frame, text="AST", command=self.analyze_code_with_ast, 
-                   bg="lightcyan", font=("TkDefaultFont", 9), width=4)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "Analyze code structure\nSafe - doesn't run code")
-        
-        # Security scan button
-        if BANDIT_AVAILABLE:
-            btn = Button(analysis_frame, text="Security", command=self.run_security_scan, 
-                   bg="salmon", font=("TkDefaultFont", 9), width=8)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "Scan for vulnerabilities\nFinds SQL injection, etc.")
-        
-        # Type check button
-        if MYPY_AVAILABLE:
-            btn = Button(analysis_frame, text="Types", command=self.run_type_checking, 
-                   bg="lightblue", font=("TkDefaultFont", 9), width=6)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "Check type annotations\nFinds type mismatches")
-        
-        # Complexity button
-        if RADON_AVAILABLE:
-            btn = Button(analysis_frame, text="Complex", command=self.analyze_complexity, 
-                   bg="plum", font=("TkDefaultFont", 9), width=7)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "Measure code complexity\nShows maintainability")
-        
-        # Debug print button
-        if ICECREAM_AVAILABLE:
-            btn = Button(analysis_frame, text="Debug", command=self.show_debug_help, 
-                   bg="lightgreen", font=("TkDefaultFont", 9), width=6)
-            btn.pack(side=tk.LEFT, padx=2)
-            self.create_tooltip(btn, "HOW TO USE:\n1. Select variable (e.g., 'x')\n2. Click Debug\n3. Adds ic(x) to show value")
-        
-        # Show feature status on second row
-        features_text = []
-        if JEDI_AVAILABLE: features_text.append("✓Jedi")
-        if PYGMENTS_AVAILABLE: features_text.append("✓Pygments")
-        if FLAKE8_AVAILABLE: features_text.append("✓Flake8")
-        if BLACK_AVAILABLE: features_text.append("✓Black")
-        if AST_AVAILABLE: features_text.append("✓AST")
-        if BANDIT_AVAILABLE: features_text.append("✓Security")
-        if MYPY_AVAILABLE: features_text.append("✓Types")
-        if RADON_AVAILABLE: features_text.append("✓Complex")
-        if ICECREAM_AVAILABLE: features_text.append("✓Debug")
-        
-        if features_text:
-            Label(toolbar2, text="Installed: " + " | ".join(features_text), fg="darkgreen", 
-                  bg="lightgray", font=("TkDefaultFont", 8)).pack(side=tk.RIGHT, padx=(10, 5), pady=2)
         
         # Code editor with syntax highlighting
         editor_frame = Frame(main_frame)
@@ -1999,7 +1944,26 @@ class IDEWindow:
         
         # Initialize enhanced IDE features
         self.setup_enhanced_features()
-        
+
+        # Bind F1 to help
+        self.editor.bind('<F1>', lambda e: self.show_help_popup())
+        self.root.bind('<F1>', lambda e: self.show_help_popup())
+
+        # Show welcome text in editor on first open
+        welcome = """# Welcome to CodeRunner!
+#
+# Quick Start:
+# 1. Type a message in the Chat window (left panel)
+#    Example: "Write a Space Invaders game in Python using Pygame"
+# 2. Click "Move to IDE" to put the code here
+# 3. Press F6 (Run & Fix) to run and auto-fix errors
+# 4. If something is wrong, type what's wrong in Chat
+#    and click "Ask LLM to Fix"
+#
+# Press F1 or click Help for more info
+"""
+        self.editor.insert("1.0", welcome)
+
     def create_tooltip(self, widget, text):
         """Create a tooltip for a widget"""
         def on_enter(event):
@@ -2044,7 +2008,10 @@ class IDEWindow:
         
         # Code operations
         self.editor.bind('<F5>', lambda e: self.run_current_code())
-        
+        self.editor.bind('<F6>', lambda e: self.run_and_auto_fix())
+        self.editor.bind('<Control-Return>', lambda e: self.accept_changes())
+        self.editor.bind('<Escape>', lambda e: self.reject_changes())
+
         # Mac compatibility
         self.editor.bind('<Command-n>', lambda e: self.new_file())
         self.editor.bind('<Command-o>', lambda e: self.load_file())
@@ -2055,6 +2022,7 @@ class IDEWindow:
         self.editor.bind('<Command-a>', lambda e: self.select_all_ide())
         self.editor.bind('<Command-f>', lambda e: self.show_find_dialog())
         self.editor.bind('<Command-g>', lambda e: self.go_to_line())
+        self.editor.bind('<Command-Return>', lambda e: self.accept_changes())
         
     def create_ide_context_menu(self):
         """Create comprehensive right-click context menu for IDE editor"""
@@ -2087,57 +2055,39 @@ class IDEWindow:
         code_menu = Menu(self.ide_context_menu, tearoff=0)
         self.ide_context_menu.add_cascade(label="⚡ Code", menu=code_menu)
         code_menu.add_command(label="▶️ Run Code", command=self.run_current_code, accelerator="F5")
+        code_menu.add_command(label="🔧 Run & Fix", command=self.run_and_auto_fix, accelerator="F6")
         code_menu.add_command(label="🔧 Fix with LLM", command=self.fix_current_code)
-        code_menu.add_separator()
-        if BLACK_AVAILABLE:
-            code_menu.add_command(label="✨ Format Code", command=self.format_code_with_black)
-        if JEDI_AVAILABLE:
-            code_menu.add_command(label="💡 Autocomplete", command=self.show_autocomplete, accelerator="Ctrl+Space")
-        
+
+        # === REVIEW ===
+        review_menu = Menu(self.ide_context_menu, tearoff=0)
+        self.ide_context_menu.add_cascade(label="✅ Review", menu=review_menu)
+        review_menu.add_command(label="Accept Changes", command=self.accept_changes, accelerator="Ctrl+Enter")
+        review_menu.add_command(label="Reject Changes", command=self.reject_changes, accelerator="Escape")
+
         # === SEARCH & NAVIGATION ===
         search_menu = Menu(self.ide_context_menu, tearoff=0)
         self.ide_context_menu.add_cascade(label="🔍 Search", menu=search_menu)
         search_menu.add_command(label="🔍 Find Text", command=self.show_find_dialog, accelerator="Ctrl+F")
         search_menu.add_command(label="📍 Go to Line", command=self.go_to_line, accelerator="Ctrl+G")
-        
-        # === ANALYSIS TOOLS (if available) ===
-        if any([AST_AVAILABLE, BANDIT_AVAILABLE, MYPY_AVAILABLE, RADON_AVAILABLE, ICECREAM_AVAILABLE]):
-            self.ide_context_menu.add_separator()
-            analysis_menu = Menu(self.ide_context_menu, tearoff=0)
-            self.ide_context_menu.add_cascade(label="🔬 Analysis", menu=analysis_menu)
-            
-            if AST_AVAILABLE:
-                analysis_menu.add_command(label="🌳 AST Analysis", command=self.analyze_code_with_ast)
-            if BANDIT_AVAILABLE:
-                analysis_menu.add_command(label="🔒 Security Scan", command=self.run_security_scan)
-            if MYPY_AVAILABLE:
-                analysis_menu.add_command(label="📝 Type Check", command=self.run_type_checking)
-            if RADON_AVAILABLE:
-                analysis_menu.add_command(label="📊 Complexity Analysis", command=self.analyze_complexity)
-            if ICECREAM_AVAILABLE:
-                analysis_menu.add_command(label="🐛 Add Debug Print", command=self.add_debug_prints)
-        
+
         # === VIEW OPTIONS ===
         view_menu = Menu(self.ide_context_menu, tearoff=0)
         self.ide_context_menu.add_cascade(label="👁️ View", menu=view_menu)
         if PYGMENTS_AVAILABLE:
             view_menu.add_command(label="🎨 Refresh Highlighting", command=self.refresh_highlighting)
-        if FLAKE8_AVAILABLE:
-            view_menu.add_command(label="📍 Toggle Linting", command=self.toggle_linting)
-        view_menu.add_separator()
         view_menu.add_command(label="📏 Update Line Numbers", command=self.update_line_numbers)
-        
+
         # === HELP ===
         self.ide_context_menu.add_separator()
         self.ide_context_menu.add_command(label="❓ Help", command=self.show_help_popup)
-        
+
         # === QUICK ACTIONS (always visible) ===
         self.ide_context_menu.add_separator()
-        self.ide_context_menu.add_command(label="▶️ Run", command=self.run_current_code)
+        self.ide_context_menu.add_command(label="🔧 Run & Fix", command=self.run_and_auto_fix)
+        self.ide_context_menu.add_command(label="✅ Accept", command=self.accept_changes)
+        self.ide_context_menu.add_command(label="❌ Reject", command=self.reject_changes)
         self.ide_context_menu.add_command(label="💾 Save", command=self.save_file)
-        self.ide_context_menu.add_command(label="📋 Copy", command=self.copy_ide_selection)
-        self.ide_context_menu.add_command(label="📄 Paste", command=self.paste_ide_clipboard)
-        
+
         # Bind right-click and Control+click for Mac compatibility
         self.editor.bind("<Button-2>", lambda e: self.show_ide_context_menu(e))
         self.editor.bind("<Button-3>", lambda e: self.show_ide_context_menu(e))
@@ -2206,56 +2156,38 @@ class IDEWindow:
         code_menu = Menu(self.ide_context_menu, tearoff=0)
         self.ide_context_menu.add_cascade(label="⚡ Code", menu=code_menu)
         code_menu.add_command(label="▶️ Run Code", command=self.run_current_code, accelerator="F5")
+        code_menu.add_command(label="🔧 Run & Fix", command=self.run_and_auto_fix, accelerator="F6")
         code_menu.add_command(label="🔧 Fix with LLM", command=self.fix_current_code)
-        code_menu.add_separator()
-        if BLACK_AVAILABLE:
-            code_menu.add_command(label="✨ Format Code", command=self.format_code_with_black)
-        if JEDI_AVAILABLE:
-            code_menu.add_command(label="💡 Autocomplete", command=self.show_autocomplete, accelerator="Ctrl+Space")
-        
+
+        # === REVIEW ===
+        review_menu = Menu(self.ide_context_menu, tearoff=0)
+        self.ide_context_menu.add_cascade(label="✅ Review", menu=review_menu)
+        review_menu.add_command(label="Accept Changes", command=self.accept_changes, accelerator="Ctrl+Enter")
+        review_menu.add_command(label="Reject Changes", command=self.reject_changes, accelerator="Escape")
+
         # === SEARCH & NAVIGATION ===
         search_menu = Menu(self.ide_context_menu, tearoff=0)
         self.ide_context_menu.add_cascade(label="🔍 Search", menu=search_menu)
         search_menu.add_command(label="🔍 Find Text", command=self.show_find_dialog, accelerator="Ctrl+F")
         search_menu.add_command(label="📍 Go to Line", command=self.go_to_line, accelerator="Ctrl+G")
-        
-        # === ANALYSIS TOOLS (if available) ===
-        if any([AST_AVAILABLE, BANDIT_AVAILABLE, MYPY_AVAILABLE, RADON_AVAILABLE, ICECREAM_AVAILABLE]):
-            self.ide_context_menu.add_separator()
-            analysis_menu = Menu(self.ide_context_menu, tearoff=0)
-            self.ide_context_menu.add_cascade(label="🔬 Analysis", menu=analysis_menu)
-            
-            if AST_AVAILABLE:
-                analysis_menu.add_command(label="🌳 AST Analysis", command=self.analyze_code_with_ast)
-            if BANDIT_AVAILABLE:
-                analysis_menu.add_command(label="🔒 Security Scan", command=self.run_security_scan)
-            if MYPY_AVAILABLE:
-                analysis_menu.add_command(label="📝 Type Check", command=self.run_type_checking)
-            if RADON_AVAILABLE:
-                analysis_menu.add_command(label="📊 Complexity Analysis", command=self.analyze_complexity)
-            if ICECREAM_AVAILABLE:
-                analysis_menu.add_command(label="🐛 Add Debug Print", command=self.add_debug_prints)
-        
+
         # === VIEW OPTIONS ===
         view_menu = Menu(self.ide_context_menu, tearoff=0)
         self.ide_context_menu.add_cascade(label="👁️ View", menu=view_menu)
         if PYGMENTS_AVAILABLE:
             view_menu.add_command(label="🎨 Refresh Highlighting", command=self.refresh_highlighting)
-        if FLAKE8_AVAILABLE:
-            view_menu.add_command(label="📍 Toggle Linting", command=self.toggle_linting)
-        view_menu.add_separator()
         view_menu.add_command(label="📏 Update Line Numbers", command=self.update_line_numbers)
-        
+
         # === HELP ===
         self.ide_context_menu.add_separator()
         self.ide_context_menu.add_command(label="❓ Help", command=self.show_help_popup)
-        
+
         # === QUICK ACTIONS (always visible) ===
         self.ide_context_menu.add_separator()
-        self.ide_context_menu.add_command(label="▶️ Run", command=self.run_current_code)
+        self.ide_context_menu.add_command(label="🔧 Run & Fix", command=self.run_and_auto_fix)
+        self.ide_context_menu.add_command(label="✅ Accept", command=self.accept_changes)
+        self.ide_context_menu.add_command(label="❌ Reject", command=self.reject_changes)
         self.ide_context_menu.add_command(label="💾 Save", command=self.save_file)
-        self.ide_context_menu.add_command(label="📋 Copy", command=self.copy_ide_selection)
-        self.ide_context_menu.add_command(label="📄 Paste", command=self.paste_ide_clipboard)
             
     def copy_ide_selection(self):
         """Copy selected text from IDE editor to clipboard"""
@@ -2731,12 +2663,14 @@ class IDEWindow:
         self.linting_enabled.set(not self.linting_enabled.get())
         
         if self.linting_enabled.get():
-            self.lint_button.config(text="Lint: ON", bg="lightcyan")
+            if hasattr(self, 'lint_button'):
+                self.lint_button.config(text="Lint: ON", bg="lightcyan")
             self.status_label.config(text="Linting enabled", fg="green")
             # Run linting immediately
             self.run_flake8_check()
         else:
-            self.lint_button.config(text="Lint: OFF", bg="lightgray")
+            if hasattr(self, 'lint_button'):
+                self.lint_button.config(text="Lint: OFF", bg="lightgray")
             self.status_label.config(text="Linting disabled", fg="orange")
             # Clear all lint tags
             self.editor.tag_remove("lint_error", "1.0", tk.END)
@@ -2761,7 +2695,7 @@ class IDEWindow:
             return
             
         self.help_window = Toplevel(self.root)
-        self.help_window.title("IDE Help - Keyboard Shortcuts & Features")
+        self.help_window.title("CodeRunner Help")
         self.help_window.geometry("600x550")
         self.help_window.resizable(True, True)  # Allow resizing for convenience
         
@@ -2790,177 +2724,65 @@ class IDEWindow:
         
         # Help content
         help_content = """
-🚀 ENHANCED IDE FEATURES & SHORTCUTS
-=====================================
+CODERUNNER QUICK START
+======================
 
-📝 EDITING SHORTCUTS
---------------------
-• Ctrl+S        : Save file
-• Ctrl+O        : Open file
-• Ctrl+N        : New file
-• Ctrl+F        : Find text
-• Ctrl+G        : Go to line
-• Ctrl+A        : Select all
-• Ctrl+C        : Copy
-• Ctrl+V        : Paste
-• Ctrl+X        : Cut
-• Ctrl+Z        : Undo
-• Ctrl+Y        : Redo
-• Tab           : Insert 4 spaces
-• Enter         : Auto-indent
+THE WORKFLOW
+------------
+1. Ask the LLM to write a game in chat
+2. Click "Move to IDE" to put the code in the editor
+3. Press F6 (Run & Fix)
+4. If it crashes -> LLM auto-fixes -> you see the diff -> Accept or Reject
+5. If it runs but something is wrong:
+   - Type what's wrong in the chat box ("enemies don't move")
+   - Click "Ask LLM to Fix" in the toolbar
+   - LLM fixes it -> you see the diff -> Accept or Reject
+6. Repeat until it works!
 
-🎯 AUTOCOMPLETE (Jedi)
-----------------------
-• Ctrl+Space    : Show completions manually
-• Type '.'      : Auto-show completions after dot
-• Double-click  : Select from completion list
-• Enter         : Accept selected completion
-• Escape        : Cancel completion popup
+You don't need to read the code or find the bug. That's the LLM's job.
 
-✨ SYNTAX HIGHLIGHTING (Pygments)
----------------------------------
-• Automatic     : Updates as you type
-• "Refresh" btn : Manual refresh if needed
-• Colors:
-  - Blue        : Keywords (if, for, def, etc.)
-  - Green       : Strings
-  - Purple      : Functions
-  - Dark Green  : Classes
-  - Dark Red    : Numbers
-  - Gray        : Comments
+KEYBOARD SHORTCUTS
+------------------
+* F5            : Run code
+* F6            : Run & Fix (run, catch errors, auto-fix)
+* Ctrl+Enter    : Accept LLM's changes
+* Escape        : Reject LLM's changes
+* Ctrl+S        : Save file
+* Ctrl+N        : New file
+* Ctrl+O        : Open file
+* Ctrl+F        : Find text
 
-🔍 LINTING (Flake8)
--------------------
-• Automatic     : Checks after 1 second pause
-• "Lint" button : Toggle on/off
-• Red underline : Errors (E codes)
-• Orange under. : Warnings (W codes)
-• Updates live  : As you type
+THE TWO BUTTONS THAT MATTER
+----------------------------
+* Run & Fix (F6)    : Runs your code. If it crashes, automatically
+                      sends the error to the LLM for a fix.
+* Ask LLM to Fix    : Code runs but does the wrong thing? Type what's
+                      wrong in the chat box, then click this button.
 
-📐 CODE FORMATTING (Black)
---------------------------
-• "Format" btn  : Apply PEP 8 formatting
-• Formats:
-  - Indentation : Consistent 4 spaces
-  - Line length : 88 characters max
-  - Spacing     : Around operators
-  - Quotes      : Consistent style
-
-🏃 RUNNING CODE
+ACCEPT & REJECT
 ---------------
-• "Run" button  : Execute current code
-• Timed checkbox: Show execution time
-• Output        : In debug console
-• Errors        : Clickable line numbers
+When the LLM proposes changes:
+  Green lines  = new code added
+  Yellow lines = code changed
+  Red lines    = code removed
 
-🤖 AI ASSISTANCE
-----------------
-• "Fix Selected": Fix errors with AI help
-• "Add Feature" : Add functionality to code
-• Auto-includes : Error context from console
+* Accept (Ctrl+Enter) : Apply the changes
+* Reject (Escape)     : Throw away the changes, keep your original
 
-🔬 ADVANCED ANALYSIS (NEW!)
----------------------------
-• AST Analysis   : Safe code inspection without execution
-  - Shows imports, functions, classes, variables
-  - Detects dangerous operations (eval, exec)
-  - Generates Abstract Syntax Tree
+FIRST SHOT vs FIXING
+---------------------
+First shot: Ask the LLM to write code from scratch in chat -> "Move to IDE"
+After that: Describe what's wrong -> "Ask LLM to Fix" -> Accept/Reject
 
-• Security Scan  : Find vulnerabilities with Bandit
-  - SQL injection risks
-  - Hardcoded passwords
-  - Unsafe deserialization
-  
-• Type Checking  : MyPy static type analysis
-  - Find type mismatches
-  - Missing return types
-  - Invalid arguments
-  
-• Complexity     : Radon code metrics
-  - Cyclomatic complexity
-  - Maintainability index
-  - Halstead metrics
-  - Bug predictions
-  
-• Debug Prints   : IceCream enhanced debugging
-  ⚡ HOW TO USE DEBUG:
-  1. SELECT text (e.g., highlight "my_variable")
-  2. CLICK Debug button
-  3. ADDS ic(my_variable) to code
-  4. RUN to see: 🔍 DEBUG | my_variable: actual_value
-  - Much better than print() - shows name AND value!
-  - Works with any expression (x+y, list[0], etc.)
+The "Fast edits" checkbox (in main window) makes the LLM return only
+the changed parts instead of regenerating the whole file. Leave it ON.
 
-💡 TIPS
--------
-• Install all features:
-  pip install jedi pygments flake8 black
-  
-• Features work independently - install what you need
-• All features gracefully degrade if not installed
-• Check status indicators in toolbar for available features
-
-📌 FEATURE STATUS
------------------"""
-        
-        # Add current feature status
-        if JEDI_AVAILABLE:
-            help_content += "\n✅ Jedi (autocomplete) - INSTALLED"
-        else:
-            help_content += "\n❌ Jedi (autocomplete) - Not installed"
-            
-        if PYGMENTS_AVAILABLE:
-            help_content += "\n✅ Pygments (syntax) - INSTALLED"
-        else:
-            help_content += "\n❌ Pygments (syntax) - Not installed"
-            
-        if FLAKE8_AVAILABLE:
-            help_content += "\n✅ Flake8 (linting) - INSTALLED"
-        else:
-            help_content += "\n❌ Flake8 (linting) - Not installed"
-            
-        if BLACK_AVAILABLE:
-            help_content += "\n✅ Black (formatting) - INSTALLED"
-        else:
-            help_content += "\n❌ Black (formatting) - Not installed"
-            
-        # Add analysis features status
-        help_content += "\n\nAnalysis Features:"
-        
-        if AST_AVAILABLE:
-            help_content += "\n✅ AST/Astor (code analysis) - INSTALLED"
-        else:
-            help_content += "\n❌ AST/Astor (code analysis) - Not installed"
-            
-        if BANDIT_AVAILABLE:
-            help_content += "\n✅ Bandit (security) - INSTALLED"
-        else:
-            help_content += "\n❌ Bandit (security) - Not installed"
-            
-        if MYPY_AVAILABLE:
-            help_content += "\n✅ MyPy (type checking) - INSTALLED"
-        else:
-            help_content += "\n❌ MyPy (type checking) - Not installed"
-            
-        if RADON_AVAILABLE:
-            help_content += "\n✅ Radon (complexity) - INSTALLED"
-        else:
-            help_content += "\n❌ Radon (complexity) - Not installed"
-            
-        if ICECREAM_AVAILABLE:
-            help_content += "\n✅ IceCream (debugging) - INSTALLED"
-        else:
-            help_content += "\n❌ IceCream (debugging) - Not installed"
-            
-        if RICH_AVAILABLE:
-            help_content += "\n✅ Rich (formatting) - INSTALLED"
-        else:
-            help_content += "\n❌ Rich (formatting) - Not installed"
-        
-        help_content += "\n\n📌 This window STAYS OPEN - switch between Help and IDE!"
-        help_content += "\n• Click 'Back to IDE' to return to coding"
-        help_content += "\n• Use 'Keep on Top' to pin this window"
-        help_content += "\n• Press Escape or 'Close Help' when done"
+TIPS
+----
+* Switch to "Python Programmer" or "HTML Programmer" mode for game code
+* The debug console (right panel) shows errors - click error lines to jump there
+* Save your work with Ctrl+S before making big changes
+"""
         
         # Insert help text
         help_text.insert("1.0", help_content)
@@ -3837,8 +3659,10 @@ Select "x + y" and Debug will add ic(x + y)
         """Get the current content of the editor"""
         return self.editor.get("1.0", tk.END + "-1c")
     
+    # ---------- Diff view: shows color-coded proposed changes ----------
+
     def show_diff(self, proposed_content):
-        """Show proposed changes with diff highlighting"""
+        """Show proposed changes with diff highlighting (green=add, yellow=change, red=remove)"""
         self.proposed_content = proposed_content
         self.is_showing_diff = True
         
@@ -3861,41 +3685,131 @@ Select "x + y" and Debug will add ic(x + y)
             self.parent.add_to_debug_console(f"  - Net change: {lines_added:+d} lines")
             self.parent.add_to_debug_console("="*60 + "\n")
         
-        # Simple diff algorithm - line by line comparison
+        # Use difflib for accurate diff display
         current_lines = self.current_content.split('\n')
         proposed_lines = proposed_content.split('\n')
-        
+
         # Clear existing diff tags
         for tag in ["diff_add", "diff_remove", "diff_change"]:
             self.editor.tag_remove(tag, "1.0", tk.END)
-        
-        # Clear editor and show proposed content
-        self.editor.delete("1.0", tk.END)
-        self.editor.insert("1.0", proposed_content)
-        
-        # Apply diff highlighting
-        max_lines = max(len(current_lines), len(proposed_lines))
-        for i in range(max_lines):
-            current_line = current_lines[i] if i < len(current_lines) else ""
-            proposed_line = proposed_lines[i] if i < len(proposed_lines) else ""
-            
-            line_start = f"{i+1}.0"
-            line_end = f"{i+1}.end"
-            
-            if i >= len(current_lines):
-                # New line added
-                self.editor.tag_add("diff_add", line_start, line_end)
-            elif i >= len(proposed_lines):
-                # Line removed (shouldn't happen in this view, but just in case)
-                continue
-            elif current_line != proposed_line:
-                # Line changed
-                self.editor.tag_add("diff_change", line_start, line_end)
-        
-        self.update_line_numbers()
-        self.status_label.config(text="Showing proposed changes - Accept or Reject | Green=Added, Yellow=Changed", fg="orange")
 
-    
+        # Build display content with removed lines shown inline
+        display_lines = []  # (text, tag_or_None)
+        matcher = difflib.SequenceMatcher(None, current_lines, proposed_lines)
+
+        for opcode, i1, i2, j1, j2 in matcher.get_opcodes():
+            if opcode == 'equal':
+                for line in current_lines[i1:i2]:
+                    display_lines.append((line, None))
+            elif opcode == 'replace':
+                # Show removed lines first (with "- " prefix), then added
+                for line in current_lines[i1:i2]:
+                    display_lines.append(("- " + line, "diff_remove"))
+                for line in proposed_lines[j1:j2]:
+                    display_lines.append((line, "diff_change"))
+            elif opcode == 'delete':
+                for line in current_lines[i1:i2]:
+                    display_lines.append(("- " + line, "diff_remove"))
+            elif opcode == 'insert':
+                for line in proposed_lines[j1:j2]:
+                    display_lines.append((line, "diff_add"))
+
+        # Clear editor and insert display content
+        self.editor.delete("1.0", tk.END)
+        for idx, (text, tag) in enumerate(display_lines):
+            if idx > 0:
+                self.editor.insert(tk.END, "\n")
+            self.editor.insert(tk.END, text)
+            if tag:
+                line_num = idx + 1
+                self.editor.tag_add(tag, f"{line_num}.0", f"{line_num}.end")
+
+        self.update_line_numbers()
+        self.status_label.config(text="Showing proposed changes - Accept or Reject | Green=Added, Yellow=Changed, Red=Removed", fg="orange")
+
+        # Enable accept/reject buttons
+        if hasattr(self, 'accept_btn'):
+            self.accept_btn.config(state=tk.NORMAL)
+            # Flash Accept button green to draw attention
+            self.accept_btn.config(bg="#00cc00")
+            self.root.after(2000, lambda: self.accept_btn.config(bg="lightgreen"))
+        if hasattr(self, 'reject_btn'):
+            self.reject_btn.config(state=tk.NORMAL)
+
+        # Reset status label font from bold "Fixing..." back to normal
+        self.status_label.config(font=("TkDefaultFont", 10))
+
+        # Make editor read-only during diff review
+        self.editor.config(state=tk.DISABLED)
+
+        # Bring IDE window to front so user notices the diff
+        self.root.lift()
+        self.root.focus_set()
+
+    def accept_changes(self):
+        """Accept the proposed changes and make them the current content"""
+        if not self.is_showing_diff or not self.proposed_content:
+            return
+
+        # The proposed content becomes the current content
+        self.current_content = self.proposed_content
+        self.proposed_content = ""
+        self.is_showing_diff = False
+
+        # Re-enable editor and set the accepted content
+        self.editor.config(state=tk.NORMAL)
+        self.editor.delete("1.0", tk.END)
+        self.editor.insert("1.0", self.current_content)
+
+        # Clear diff tags
+        for tag in ["diff_add", "diff_remove", "diff_change"]:
+            self.editor.tag_remove(tag, "1.0", tk.END)
+
+        # Re-apply syntax highlighting
+        self.apply_syntax_highlighting()
+        self.update_line_numbers()
+
+        # Disable accept/reject buttons
+        if hasattr(self, 'accept_btn'):
+            self.accept_btn.config(state=tk.DISABLED)
+        if hasattr(self, 'reject_btn'):
+            self.reject_btn.config(state=tk.DISABLED)
+
+        self.status_label.config(text="Changes accepted", fg="green")
+
+        # Notify parent about the new content
+        if hasattr(self.parent, 'notify_ide_content_loaded'):
+            self.parent.notify_ide_content_loaded(self.current_content)
+
+    def reject_changes(self):
+        """Reject proposed changes and restore the original content"""
+        if not self.is_showing_diff:
+            return
+
+        self.proposed_content = ""
+        self.is_showing_diff = False
+
+        # Re-enable editor and restore original content
+        self.editor.config(state=tk.NORMAL)
+        self.editor.delete("1.0", tk.END)
+        self.editor.insert("1.0", self.current_content)
+
+        # Clear diff tags
+        for tag in ["diff_add", "diff_remove", "diff_change"]:
+            self.editor.tag_remove(tag, "1.0", tk.END)
+
+        # Re-apply syntax highlighting
+        self.apply_syntax_highlighting()
+        self.update_line_numbers()
+
+        # Disable accept/reject buttons
+        if hasattr(self, 'accept_btn'):
+            self.accept_btn.config(state=tk.DISABLED)
+        if hasattr(self, 'reject_btn'):
+            self.reject_btn.config(state=tk.DISABLED)
+
+        self.status_label.config(text="Changes rejected - original code restored", fg="red")
+
     def new_file(self):
         """Create a new file"""
         if messagebox.askyesno("New File", "Clear current content?"):
@@ -4006,29 +3920,98 @@ Select "x + y" and Debug will add ic(x + y)
             
 
     def fix_current_code(self):
-        """Fix the current code content using parent's fix system"""
+        """Send code to LLM for fixing. User describes the problem in chat,
+        the LLM figures out what's broken and returns only the changes."""
         content = self.get_content()
         if content.strip():
-            # Check if selection exists for targeted editing
-            try:
-                sel_start = self.editor.index(tk.SEL_FIRST)
-                sel_end = self.editor.index(tk.SEL_LAST)
-                
-                # Get line numbers
-                start_line = int(sel_start.split('.')[0])
-                end_line = int(sel_end.split('.')[0])
-                
-                # Add context to the fix request
-                fix_request = f"Fix the selected code (lines {start_line}-{end_line}):\n{content}"
-                self.parent.fix_code_from_ide(fix_request)
-                self.status_label.config(text=f"Fix request sent for lines {start_line}-{end_line}", fg="blue")
-            except tk.TclError:
-                # No selection, fix entire file
-                self.parent.fix_code_from_ide(content)
-                self.status_label.config(text="Fix request sent", fg="blue")
+            self.parent.fix_code_from_ide(content)
+            self.status_label.config(text="Fix request sent to LLM", fg="blue")
         else:
             self.status_label.config(text="No code to fix", fg="gray")
-    
+
+    # ---------- Run & Fix (F6): the main workflow button ----------
+
+    def run_and_auto_fix(self):
+        """Run code, detect errors, and automatically send to LLM for fixing.
+        Flow: execute -> check stderr/browser errors -> send to LLM -> show diff"""
+        content = self.get_content()
+        if not content.strip():
+            self.status_label.config(text="No code to run", fg="gray")
+            return
+
+        # Determine mode
+        mode = self.parent.system_mode.get()
+        is_html = (mode == "html_programmer")
+        code_type = "HTML" if is_html else "Python"
+
+        self.status_label.config(text=f"Run & Fix: running {code_type}...", fg="orange")
+        # Flash Run & Fix button orange while running
+        if hasattr(self, 'run_fix_btn'):
+            self.run_fix_btn.config(bg="orange")
+            self.root.after(2000, lambda: self.run_fix_btn.config(bg="gold"))
+        self.root.update_idletasks()
+
+        # Run the code
+        use_timeout = self.timed_execution.get()
+        self.parent.run_last_code_block(content, use_timeout=use_timeout)
+
+        if is_html:
+            # HTML errors arrive async via BrowserErrorServer; poll for ~3 seconds
+            self.root.after(3000, lambda: self._check_html_errors_and_fix(content))
+        else:
+            # Python execution is synchronous; check stderr after brief delay
+            self.root.after(500, lambda: self._check_python_errors_and_fix(content))
+
+    def _check_python_errors_and_fix(self, original_code):
+        """Check for Python errors after execution and trigger auto-fix"""
+        stderr = getattr(self.parent, 'last_run_stderr', None)
+        if stderr and stderr.strip():
+            self.status_label.config(text="Fixing...", fg="red", font=("TkDefaultFont", 10, "bold"))
+            self.root.update_idletasks()
+
+            # Enable auto-propose bypass so the fix flows through
+            self.parent._auto_fix_in_progress = True
+
+            # Store original code for diff
+            self.parent.ide_original_code = original_code
+
+            # Send fix request
+            self.parent.fix_code_from_ide(original_code)
+        else:
+            self.status_label.config(text="No errors!", fg="green", font=("TkDefaultFont", 10, "bold"))
+            # Reset status after 2 seconds
+            self.root.after(2000, lambda: self.status_label.config(text="Ready", fg="blue", font=("TkDefaultFont", 10)))
+
+    def _check_html_errors_and_fix(self, original_code):
+        """Check for HTML/browser errors and trigger auto-fix"""
+        # Read debug console for browser error markers
+        self.parent.debug_console.config(state=tk.NORMAL)
+        debug_content = self.parent.debug_console.get("1.0", tk.END).strip()
+        self.parent.debug_console.config(state=tk.DISABLED)
+
+        error_markers = [
+            "BROWSER ERROR CAPTURED", "JavaScript Error", "Uncaught",
+            "TypeError", "ReferenceError", "SyntaxError"
+        ]
+        has_errors = any(marker in debug_content for marker in error_markers)
+
+        if has_errors:
+            self.status_label.config(text="Fixing...", fg="red", font=("TkDefaultFont", 10, "bold"))
+            self.root.update_idletasks()
+
+            # Enable auto-propose bypass
+            self.parent._auto_fix_in_progress = True
+
+            # Store original code for diff
+            self.parent.ide_original_code = original_code
+
+            # Send fix request
+            self.parent.fix_code_from_ide(original_code)
+        else:
+            self.status_label.config(text="No errors!", fg="green", font=("TkDefaultFont", 10, "bold"))
+            # Reset status after 2 seconds
+            self.root.after(2000, lambda: self.status_label.config(text="Ready", fg="blue", font=("TkDefaultFont", 10)))
+
     def clear_ide(self):
         """Clear the IDE content and send a simple system message"""
         # Clear the editor content directly without triggering notifications
@@ -4228,6 +4211,11 @@ def clear_gpu_memory():
         print(f"⚠️ GPU cleanup warning: {e}")
 
 
+# =============================================================================
+# MAIN APPLICATION — three-panel chat + IDE + debug console
+# Handles all LLM backends, UI layout, message routing, and the fix workflow.
+# =============================================================================
+
 class OllamaGUI:
     """Main chat interface with three-window system and integrated IDE
     
@@ -4355,6 +4343,13 @@ class OllamaGUI:
         # Response timer variables
         self.response_start_time = None  # When the current response started
         self.timer_update_id = None  # ID for the timer update callback
+
+        # Token counting variables
+        self.last_input_tokens = 0   # Input tokens for last send
+        self.last_output_tokens = 0  # Output tokens for last response
+        self.last_output_speed = 0.0 # Tokens per second for last response
+        self.total_input_tokens = 0  # Running total input tokens (resets on /restart)
+        self.total_output_tokens = 0 # Running total output tokens (resets on /restart)
         
         # Game instruction prompts
         self.game_prompts = {
@@ -4702,9 +4697,9 @@ GREAT GRAPHICS & ANIMATION:
         self.ide_current_content = None
         self.ide_current_filename = None
 
-        # Disable auto-propose by default (it can mess up code when LLM
-        # response contains mixed explanations and code)
-        self.disable_auto_propose = True
+        # Auto-propose is enabled — the _auto_fix_in_progress flag guards
+        # the fix workflow, and Move to IDE handles first-shot.
+        self.disable_auto_propose = False
 
         # Command list
         self.commands = {
@@ -5286,11 +5281,11 @@ GREAT GRAPHICS & ANIMATION:
                                     command=self.toggle_search_mode)
         search_checkbox.pack(side=tk.LEFT, padx=5)
         
-        # NEW: Checkbox to request only the functions that need to be edited (default OFF → provide full code)
-        self.request_functions_only = tk.BooleanVar(value=False)
+        # Checkbox: targeted edits (SEARCH/REPLACE) vs full file regeneration (default ON → fast edits)
+        self.request_functions_only = tk.BooleanVar(value=True)
         request_funcs_checkbox = Checkbutton(
             self.search_frame,
-            text="Request just the functions that need to be edited",
+            text="Fast edits (only changed parts)",
             variable=self.request_functions_only,
             command=self.update_system_message_for_targeted_changes
         )
@@ -5337,6 +5332,7 @@ GREAT GRAPHICS & ANIMATION:
         
         Button(preset_frame, text="Code Exact (0.15)", command=lambda: self.set_temperature(0.15)).pack(side=tk.LEFT, padx=2)
         Button(preset_frame, text="Precise (0.2)", command=lambda: self.set_temperature(0.2)).pack(side=tk.LEFT, padx=2)
+        Button(preset_frame, text="Game (0.35)", command=lambda: self.set_temperature(0.35)).pack(side=tk.LEFT, padx=2)
         Button(preset_frame, text="Balanced (0.5)", command=lambda: self.set_temperature(0.5)).pack(side=tk.LEFT, padx=2)
         Button(preset_frame, text="Creative (0.8)", command=lambda: self.set_temperature(0.8)).pack(side=tk.LEFT, padx=2)
 
@@ -5468,16 +5464,14 @@ GREAT GRAPHICS & ANIMATION:
         Button(prompt_btn_frame, text="Save", command=self.save_system_prompt).pack(side=tk.RIGHT, padx=5)
         Button(prompt_btn_frame, text="Close", command=self.hide_system_prompt).pack(side=tk.RIGHT, padx=5)
         
-        # Chat display area with header
+        # ---- Chat header: [Move to IDE] [Open IDE]  timer  token counters ----
         chat_frame = Frame(main_frame)
         chat_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        
+
         chat_header_frame = Frame(chat_frame)
         chat_header_frame.pack(fill=tk.X, pady=(0, 5))
-        
+
         # IDE buttons moved to the left
-        self.propose_btn = Button(chat_header_frame, text="Propose to IDE (OFF)", command=self.toggle_propose_feature, bg="gray")
-        self.propose_btn.pack(side=tk.LEFT, padx=2)
         Button(chat_header_frame, text="Move to IDE", command=self.move_code_to_ide, bg="lightgreen").pack(side=tk.LEFT, padx=2)
         Button(chat_header_frame, text="Open IDE", command=self.open_ide_window, bg="lightblue").pack(side=tk.LEFT, padx=2)
 
@@ -5487,8 +5481,14 @@ GREAT GRAPHICS & ANIMATION:
         self.timer_label = Label(chat_header_frame, text="00:00", font=("Arial", 10, "bold"), fg="blue")
         self.timer_label.pack(side=tk.LEFT, padx=(10, 0))
 
-        # Chat editing control - changed text color to black
-        Button(chat_header_frame, text="Sync Edits", command=self.sync_chat_edits, bg="orange", fg="black").pack(side=tk.RIGHT, padx=2)
+        # Token counters (per-message and running totals)
+        self.token_label = Label(chat_header_frame, text="In:0 Out:0 | Total In:0 Out:0",
+                                 font=("Arial", 9), fg="gray40")
+        self.token_label.pack(side=tk.LEFT, padx=(10, 0))
+
+        self.speed_label = Label(chat_header_frame, text="",
+                                 font=("Arial", 9), fg="gray40")
+        self.speed_label.pack(side=tk.LEFT, padx=(4, 0))
         
         # Chat display with scrolling - NOW EDITABLE (reduced height by 50%)
         self.chat_display = scrolledtext.ScrolledText(chat_frame, wrap=tk.WORD, height=10)
@@ -5537,7 +5537,7 @@ GREAT GRAPHICS & ANIMATION:
         # Removed dedicated COPY button - use context menu instead
         Button(debug_header_frame, text="Clear", command=self.clear_debug_console).pack(side=tk.RIGHT, padx=2)
         # Toggle for capturing browser errors back to debug console (non-invasive)
-        self.capture_browser_errors = BooleanVar(value=False)
+        self.capture_browser_errors = BooleanVar(value=True)
         Checkbutton(
             debug_header_frame,
             text="Capture Browser Errors",
@@ -6163,8 +6163,11 @@ Based on the above context, please answer: {input_text}"""
             self.stop_generation = True
             self.status_var.set("Stopping generation...")
 
+    # ---------- Central dispatch: routes to the active backend's stream method ----------
+
     def get_model_response(self, has_image=False, image_data=None, display_message=None, image_media_type=None):
-        """Get response from the model in a separate thread"""
+        """Get response from the model in a separate thread.
+        Dispatches to stream_*_response() based on backend_var, then records token stats."""
         try:
             # Store current restart counter to check if chat was restarted during processing - FIX for restart not clearing
             current_restart_counter = getattr(self, 'restart_counter', 0)
@@ -6289,6 +6292,13 @@ Based on the above context, please answer: {input_text}"""
                     self.display_chat_system_message(f"Model '{model_name}' doesn't support images. Try a multimodal model like llava.")
         
         finally:
+            # Record token stats before stopping timer (needs elapsed time)
+            try:
+                resp = full_response if full_response else ""
+            except NameError:
+                resp = ""
+            self.record_token_stats(resp)
+
             # Stop response timer
             self.stop_response_timer()
 
@@ -6296,6 +6306,9 @@ Based on the above context, please answer: {input_text}"""
             self.generation_active = False
             self.stop_generation = False
             self.root.after(0, self.enable_input)
+
+    # ---------- Streaming backend methods (one per LLM backend) ----------
+    # Each returns the full response text. Called from get_model_response().
 
     def stream_openai_response(self, prompt_text):
         """Get response from OpenAI chat models, handling GPT-5 vs others.
@@ -8047,25 +8060,77 @@ Based on the above context, please answer: {input_text}"""
             # Schedule next update in 1 second
             self.timer_update_id = self.root.after(1000, self.update_timer_display)
 
+    # ---------- Token counting & speed metrics ----------
+
+    def estimate_token_count(self, text):
+        """Estimate token count from text (~4 chars per token for English).
+        Works across all backends without requiring a tokenizer."""
+        if not text:
+            return 0
+        return max(1, len(text) // 4)
+
+    def count_messages_input_tokens(self):
+        """Estimate the total input tokens for the current message list"""
+        total = 0
+        for msg in self.messages:
+            content = msg.get('content', '')
+            if isinstance(content, str):
+                total += self.estimate_token_count(content)
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get('type') == 'text':
+                        total += self.estimate_token_count(item.get('text', ''))
+        return total
+
+    def record_token_stats(self, full_response):
+        """Record token stats after a response completes and update display"""
+        import time
+        elapsed = 0
+        if self.response_start_time:
+            elapsed = time.time() - self.response_start_time
+
+        # Input tokens = everything sent to the model
+        self.last_input_tokens = self.count_messages_input_tokens()
+        # Output tokens = the response
+        self.last_output_tokens = self.estimate_token_count(full_response) if full_response else 0
+        # Speed (output tokens per second)
+        self.last_output_speed = self.last_output_tokens / elapsed if elapsed > 0 else 0
+
+        # Accumulate running totals
+        self.total_input_tokens += self.last_input_tokens
+        self.total_output_tokens += self.last_output_tokens
+
+        # Update UI on the main thread
+        self.root.after(0, self.update_token_display)
+
+    def update_token_display(self):
+        """Update the token counter labels in the chat header"""
+        self.token_label.config(
+            text=f"In:{self.last_input_tokens:,} Out:{self.last_output_tokens:,} | Total In:{self.total_input_tokens:,} Out:{self.total_output_tokens:,}"
+        )
+        if self.last_output_speed > 0:
+            self.speed_label.config(text=f"({self.last_output_speed:.1f} tok/s)")
+        else:
+            self.speed_label.config(text="")
+
     def handle_code_update_response(self, response_text):
         """Handle code update responses - just extract code and show as diff
-        
+
         Much simpler than FIM - just show what the LLM suggests!
         """
         # This is now handled by check_and_handle_ide_proposals
         # which extracts code blocks and shows them as diffs
         return False
     
+    # ---------- Response -> IDE routing ----------
+    # After the LLM finishes, this extracts code from the response and routes
+    # it to the IDE as a diff.  Tries SEARCH/REPLACE blocks first (fast edits),
+    # then falls back to extracting full code blocks.
+
     def check_and_handle_ide_proposals(self, message):
-        """Check for IDE proposals in the message and handle them
-        
-        NOTE: This feature can be problematic when the LLM response contains
-        mixed content (explanations + code). Consider using manual copy-paste
-        or the 'Save Code' feature instead.
-        """
-        # Add a setting to disable auto-proposals
-        if hasattr(self, 'disable_auto_propose') and self.disable_auto_propose:
-            return
+        """Route LLM response to IDE: try SEARCH/REPLACE blocks, then code blocks."""
+        # Auto-propose is always enabled; the _auto_fix_in_progress flag
+        # ensures the fix workflow flows through correctly.
         import re
         
         # Look for IDE_PROPOSE markers first
@@ -8079,38 +8144,54 @@ Based on the above context, please answer: {input_text}"""
             # If IDE window exists, propose the changes
             if hasattr(self, 'ide_window'):
                 self.propose_code_changes(proposed_code)
-                
+                self._auto_fix_in_progress = False
+
                 # Show notification
                 self.show_copy_status("💡 Code changes proposed to IDE - check IDE window to accept/reject", 4000)
                 return
-        
-        # If no IDE_PROPOSE markers but we have original code from fix request, 
-        # check for code blocks that might be fixes
+
+        # Determine language pattern based on mode
+        is_html_mode = (self.system_mode.get() == "html_programmer")
+
+        # If we have original code from a fix request, try to apply the response
         if hasattr(self, 'ide_original_code') and self.ide_original_code:
-            # Look for python code blocks
-            code_pattern = r'```python\s*\n(.*?)```'
+
+            # METHOD 1: Try SEARCH/REPLACE blocks first (fast, targeted edits)
+            sr_result = self._apply_search_replace_blocks(self.ide_original_code, message)
+            if sr_result and sr_result.strip() != self.ide_original_code.strip():
+                if hasattr(self, 'ide_window'):
+                    self.propose_code_changes(sr_result)
+                    self._auto_fix_in_progress = False
+                    self.show_copy_status("💡 Edits applied to IDE - check IDE window to accept/reject", 4000)
+                self.ide_original_code = None
+                return
+
+            # METHOD 2: Fall back to full code block extraction
+            if is_html_mode:
+                code_pattern = r'```html\s*\n(.*?)```'
+            else:
+                code_pattern = r'```python\s*\n(.*?)```'
             code_matches = re.findall(code_pattern, message, re.DOTALL)
-            
+
             if code_matches:
-                # Take the last/most recent code block
                 proposed_code = code_matches[-1].strip()
-                
-                # If it's different from the original, propose it
+
                 if proposed_code != self.ide_original_code.strip():
                     if hasattr(self, 'ide_window'):
                         self.propose_code_changes(proposed_code)
-                        
-                        # Show notification
+                        self._auto_fix_in_progress = False
                         self.show_copy_status("💡 Fixed code proposed to IDE - check IDE window to accept/reject", 4000)
-                        
-                    # Clear the original code since we've handled this fix
+
                     self.ide_original_code = None
                     return
-        
+
         # If IDE has content and response contains code that seems to be a modification
         if hasattr(self, 'ide_current_content') and self.ide_current_content:
-            # Look for python code blocks in the response
-            code_pattern = r'```python\s*\n(.*?)```'
+            # Look for code blocks matching current mode
+            if is_html_mode:
+                code_pattern = r'```html\s*\n(.*?)```'
+            else:
+                code_pattern = r'```python\s*\n(.*?)```'
             code_matches = re.findall(code_pattern, message, re.DOTALL)
             
             if code_matches:
@@ -8151,7 +8232,8 @@ Based on the above context, please answer: {input_text}"""
                     if should_propose:
                         if hasattr(self, 'ide_window'):
                             self.propose_code_changes(proposed_code)
-                            
+                            self._auto_fix_in_progress = False
+
                             # Show notification
                             self.show_copy_status("💡 Updated code proposed to IDE - check IDE window to accept/reject", 4000)
                             
@@ -8341,6 +8423,13 @@ Based on the above context, please answer: {input_text}"""
         if hasattr(self, 'last_ide_context_included'):
             self.last_ide_context_included = False
         self.root.title("JMR's Chat & Code")  # Reset title
+        # Reset token counters
+        self.last_input_tokens = 0
+        self.last_output_tokens = 0
+        self.last_output_speed = 0.0
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.update_token_display()
         # Chat is now always editable
         self.chat_display.delete("1.0", tk.END)
         # Reset thinking state tracker
@@ -8368,22 +8457,24 @@ Based on the above context, please answer: {input_text}"""
             self.display_message("System", "Switched to Helpful Assistant mode")
             # Balanced settings for general assistance
             self.set_temperature(0.7)
+
+
             self.top_p.set(0.9)
             self.top_k.set(40)
         elif mode == "programmer":
             new_content = python_system_message
             self.display_message("System", "Switched to Python Programmer mode")
-            # Balanced settings for complex game code - slight flexibility for better solutions
-            self.set_temperature(0.2)
-            self.top_p.set(0.95)  # Filter out unlikely tokens
-            self.top_k.set(10)    # Consider top 10 candidates
+            # Game-tuned settings: slightly creative for physics/math while staying correct
+            self.set_temperature(0.35)
+            self.top_p.set(0.9)
+            self.top_k.set(20)
         elif mode == "html_programmer":
             new_content = html_system_message
             self.display_message("System", "Switched to HTML Programmer mode")
-            # Balanced settings for complex game code - slight flexibility for better solutions
-            self.set_temperature(0.2)
-            self.top_p.set(0.95)  # Filter out unlikely tokens
-            self.top_k.set(10)    # Consider top 10 candidates
+            # Game-tuned settings: slightly creative for physics/math while staying correct
+            self.set_temperature(0.35)
+            self.top_p.set(0.9)
+            self.top_k.set(20)
         elif mode == "therapist":
             new_content = get_default_system_message()
             self.display_message("System", "Switched to Therapist mode")
@@ -8455,7 +8546,13 @@ Based on the above context, please answer: {input_text}"""
 
         # Append targeted changes instruction if checkbox is enabled
         if self.request_functions_only.get():
-            targeted_instruction = "\n\nIMPORTANT: When providing code changes, focus on targeted fixes only. Do not regenerate entire programs unless explicitly requested. If code is already loaded in an IDE, provide only the functions/methods that need changes."
+            targeted_instruction = (
+                "\n\nIMPORTANT: When fixing code, return ONLY the changes using SEARCH/REPLACE blocks. "
+                "Do NOT regenerate the entire file. Format:\n\n"
+                "<<<<<<< SEARCH\nexact original lines\n=======\nreplacement lines\n>>>>>>> REPLACE\n\n"
+                "Rules: SEARCH must exactly match original code. Include enough context to uniquely match. "
+                "Use multiple blocks for multiple fixes. Never return the full file."
+            )
             full_content = base_content + targeted_instruction
         else:
             full_content = base_content
@@ -10194,32 +10291,32 @@ Based on the above context, please answer: {input_text}"""
         else:
             self.display_chat_system_message(f"{description} - open IDE to see changes")
     
+    # ---------- Fix workflow: IDE -> LLM -> diff -> Accept/Reject ----------
+    # Called by both "Ask LLM to Fix" and Run & Fix (F6) after error detection.
+
     def fix_code_from_ide(self, code_content):
-        """Fix code from IDE with debug console context and prepare for accept/reject workflow"""
+        """Fix code from IDE. Asks the LLM to return SEARCH/REPLACE blocks
+        so it only outputs the changed parts (fast). Falls back to full
+        code block if the LLM doesn't use the format."""
         # Get any text from the user input box for additional context
         user_message = self.user_input.get("1.0", tk.END).strip()
-        
+
         # Get debug console content for context
         self.debug_console.config(state=tk.NORMAL)
         debug_content = self.debug_console.get("1.0", tk.END).strip()
         self.debug_console.config(state=tk.DISABLED)
-        
+
         # Determine language based on current system mode
         mode = self.system_mode.get()
         is_html_mode = (mode == "html_programmer")
         language = "html" if is_html_mode else "python"
         code_type = "HTML" if is_html_mode else "Python"
 
-        # Check if this is a targeted fix request (selected lines)
-        is_targeted_fix = code_content.startswith("Fix the selected code")
+        # Store the original code for the accept/reject workflow
+        self.ide_original_code = code_content
 
-        if is_targeted_fix:
-            fix_instruction = f"Please fix the selected code snippet. Provide only the corrected code for the selected portion in a ```{language} code block."
-        else:
-            fix_instruction = f"Please provide the complete fixed program with all necessary improvements. Provide the entire working program in a ```{language} code block."
-
-        # Create comprehensive prompt with debug info
-        prompt = f"""Please review and fix any issues in the following {code_type} code:
+        # Build prompt asking for SEARCH/REPLACE edit blocks (fast, targeted)
+        prompt = f"""Here is a {code_type} program that needs fixing:
 ```{language}
 {code_content}
 ```
@@ -10229,52 +10326,26 @@ Debug Console Output:
 {debug_content if debug_content else '(no debug output)'}
 ```
 
-{f"Additional context: {user_message}" if user_message else ""}
+{f"Problem: {user_message}" if user_message else "Please analyze the code and debug output, find the bugs, and fix them."}
 
-{fix_instruction}"""
-        prepared_prompt = prompt  # Keep HTML/JS-aware prompt for browser error path
-        
-        # Store the original code for the accept/reject workflow
-        self.ide_original_code = code_content
-        
-        # Clear input and send the fix request
-        self.user_input.delete("1.0", tk.END)
-        self.user_input.insert("1.0", prompt)
-        
-        # Explicitly surface the fix request to chat so the LLM sees the error context
-        self.display_chat_system_message("Fix request sent - including error details for analysis")
-        
-        # Original logic for fixing last run code with errors
-        if not self.last_run_code or not self.last_run_stderr:
-            # Allow HTML/browser errors captured in debug console to drive the fix flow
-            error_markers = [
-                "BROWSER ERROR CAPTURED", "JavaScript Error", "Uncaught", "TypeError", "ReferenceError", "SyntaxError"
-            ]
-            has_browser_error = any(marker in (debug_content or "") for marker in error_markers)
-            if not has_browser_error:
-                messagebox.showwarning("Fix Code", "No code with errors has been run recently.")
-                return
-            # Use the HTML prompt prepared above
-            prompt = prepared_prompt
+Return ONLY the changes using SEARCH/REPLACE blocks. Each block finds the exact original code and replaces it. Format:
 
-        # Get any text from the user input box
-        user_message = self.user_input.get("1.0", tk.END).strip()
-        
-        # Get debug console content
-        self.debug_console.config(state=tk.NORMAL)
-        debug_content = self.debug_console.get("1.0", tk.END).strip()
-        self.debug_console.config(state=tk.DISABLED)
-        
-        if self.last_run_stderr:
-            prompt = f"""The following Python code was executed:
-```python
-{self.last_run_code}
-```
+<<<<<<< SEARCH
+exact lines from the original code
+=======
+replacement lines
+>>>>>>> REPLACE
 
-Debug Console Output:
-```
-{debug_content}
-```
+Rules:
+- Include enough context lines in SEARCH to uniquely match the location
+- SEARCH must exactly match the original code (same whitespace, same text)
+- Only include blocks for parts that actually need changing
+- You can use multiple SEARCH/REPLACE blocks for multiple fixes
+- Do NOT return the entire file"""
+
+        # If we have stderr from a recent crash, add error details
+        if self.last_run_stderr and self.last_run_stderr.strip():
+            error_details = f"""
 
 Error Details:
 Standard Output:
@@ -10284,35 +10355,30 @@ Standard Output:
 Standard Error:
 ```
 {self.last_run_stderr.strip()}
-```
+```"""
+            prompt += error_details
 
-{user_message if user_message else f"Please analyze the code, debug console output, and the error messages. Identify the issues and provide a complete fixed version of the {code_type} program using <IDE_PROPOSE> tags so I can review and accept/reject the changes in the IDE. Provide the entire working program with all improvements."}
-"""
-
-        # Display the request with the user's actual message included
-        if self.last_run_stderr:
+        # Display what we're sending
+        if self.last_run_stderr and self.last_run_stderr.strip():
             error_summary = self.last_run_stderr.strip().split("\n")[-1]
+            display_message = f"[Fix code with error: {error_summary}]"
+            if user_message:
+                display_message = f"{display_message}\n{user_message}"
+        elif user_message:
+            display_message = f"[Ask LLM to fix code]\n{user_message}"
         else:
-            # For browser/HTML errors, summarize from debug console
-            lines = [ln for ln in (debug_content or "").split("\n") if ln.strip()]
-            # Prefer a "Message:" line if present
-            msg_line = next((ln for ln in lines if ln.strip().lower().startswith("message:")), None)
-            error_summary = (msg_line or (lines[-1] if lines else "browser errors")).strip()
-        display_message = f"[Fix code with error: {error_summary}]"
-        
-        # Include user message in the display if provided
-        if user_message:
-            display_message = f"{display_message}\n{user_message}"
-            
+            display_message = "[Ask LLM to review and fix code]"
+
         self.display_message("You", display_message)
-        
-        # Ensure the LLM sees the actual error details in chat context
-        if self.last_run_stderr:
+
+        # Surface error details in chat if we have them
+        if self.last_run_stderr and self.last_run_stderr.strip():
             self.display_chat_system_message(f"--- Error details used for fix ---\n{self.last_run_stderr.strip()}")
-        
-        # Clear input box if there was a message
-        if user_message:
-            self.user_input.delete("1.0", tk.END)
+        else:
+            self.display_chat_system_message("Fix request sent — LLM will return only the changes")
+
+        # Clear input box
+        self.user_input.delete("1.0", tk.END)
 
         # Add user message (the fix request) to history
         self.messages.append({'role': 'user', 'content': prompt})
@@ -10446,49 +10512,63 @@ Standard Error:
         else:
             self.show_copy_status("No code found to move to IDE")
             
-    def toggle_propose_feature(self):
-        """Toggle the auto-propose feature on/off"""
-        self.disable_auto_propose = not self.disable_auto_propose
-        
-        if self.disable_auto_propose:
-            self.propose_btn.config(text="Propose to IDE (OFF)", bg="gray")
-            self.display_status_message("Auto-propose disabled - use Move to IDE or copy/paste instead")
-        else:
-            self.propose_btn.config(text="Propose to IDE (ON)", bg="lightyellow")
-            self.display_status_message("Auto-propose enabled - be careful with mixed content responses")
-            # If enabled, try to propose the last code
-            self.propose_last_code_to_ide()
-    
-    def propose_last_code_to_ide(self):
-        """Propose the last code block from chat as changes to current IDE content"""
-        # Find the last code block in chat
-        code_to_propose = self._find_last_code_block()
-        
-        if not code_to_propose:
-            self.show_copy_status("No code block found in recent messages")
-            return
-            
-        # Check if IDE has content
-        if not hasattr(self, 'ide_current_content') or not self.ide_current_content:
-            # If no content in IDE, just move the code there
-            self.ide_window.set_content(code_to_propose, None)
-            self.ide_window.show_window()
-            self.show_copy_status("Code moved to IDE (no existing content to diff)")
-            return
-            
-        # If IDE has content, propose as changes
-        if hasattr(self, 'ide_window'):
-            self.propose_code_changes(code_to_propose)
-            self.ide_window.show_window()
-            self.show_copy_status("💡 Code proposed to IDE - check IDE window to accept/reject", 4000)
-        else:
-            self.show_copy_status("IDE window not available")
-
     def propose_code_changes(self, proposed_code):
         """Propose code changes to the IDE window for user review"""
         if hasattr(self, 'ide_window'):
             self.ide_window.show_diff(proposed_code)
             self.ide_window.show_window()
+
+    # ---------- SEARCH/REPLACE block parser ----------
+    # LLM returns <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE blocks.
+    # This method finds each block, matches it in the original code, and applies the replacement.
+
+    def _apply_search_replace_blocks(self, original_code, message):
+        """Parse SEARCH/REPLACE blocks from LLM response and apply them to original code.
+
+        Returns the modified code, or None if no SEARCH/REPLACE blocks were found.
+        """
+        import re
+        # Match <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE blocks
+        pattern = r'<{6,7}\s*SEARCH\s*\n(.*?)\n={6,7}\s*\n(.*?)\n>{6,7}\s*REPLACE'
+        blocks = re.findall(pattern, message, re.DOTALL)
+
+        if not blocks:
+            return None
+
+        result = original_code
+        applied = 0
+        for search_text, replace_text in blocks:
+            # Try exact match first
+            if search_text in result:
+                result = result.replace(search_text, replace_text, 1)
+                applied += 1
+            else:
+                # Try with stripped trailing whitespace per line (LLM whitespace drift)
+                search_lines = [line.rstrip() for line in search_text.split('\n')]
+                result_lines = result.split('\n')
+                result_stripped = [line.rstrip() for line in result_lines]
+
+                # Sliding window search
+                search_len = len(search_lines)
+                found = False
+                for i in range(len(result_stripped) - search_len + 1):
+                    if result_stripped[i:i + search_len] == search_lines:
+                        # Replace the original lines (preserving original line endings)
+                        replace_lines = replace_text.split('\n')
+                        result_lines[i:i + search_len] = replace_lines
+                        result = '\n'.join(result_lines)
+                        applied += 1
+                        found = True
+                        break
+
+                if not found:
+                    self.add_to_debug_console(f"SEARCH/REPLACE: could not match block ({search_text[:50]}...)")
+
+        if applied > 0:
+            self.add_to_debug_console(f"Applied {applied}/{len(blocks)} SEARCH/REPLACE edits")
+            return result
+
+        return None
 
     def clear_debug_console(self):
         """Clear the contents of the debug console"""
