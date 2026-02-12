@@ -7093,8 +7093,8 @@ Based on the above context, please answer: {input_text}"""
                     else:
                         prompt = f"<|im_start|>user\n{self.messages[-1]['content']}<|im_end|>\n<|im_start|>assistant\n"
 
-            # Log prompt length to system messages (not debug — debug is for runtime errors only)
-            self.display_chat_system_message(f"MLX prompt: {len(prompt)} chars")
+            # Log prompt length to system console (not debug — debug is for runtime errors only)
+            self.display_system_message(f"MLX prompt: {len(prompt)} chars")
 
             # Stream the response in real-time with live display
             response = ""
@@ -10076,9 +10076,9 @@ Based on the above context, please answer: {input_text}"""
             # Ensure the file has proper permissions
             os.chmod(html_path, 0o644)
 
-            # Show file info to user (system messages, not debug)
-            self.display_chat_system_message(f"HTML file created: {html_path}")
-            self.display_chat_system_message(f"File size: {len(html_code)} characters")
+            # Show file info in system console
+            self.display_system_message(f"HTML file created: {html_path}")
+            self.display_system_message(f"File size: {len(html_code)} characters")
 
             # Open in default browser with multiple fallback methods
             import webbrowser
@@ -10088,7 +10088,7 @@ Based on the above context, please answer: {input_text}"""
             try:
                 result = subprocess.run(['which', 'xdg-open'], capture_output=True, text=True)
                 if result.returncode != 0:
-                    self.display_chat_system_message("xdg-open not found (run: sudo apt install xdg-utils)")
+                    self.display_system_message("xdg-open not found (run: sudo apt install xdg-utils)")
 
                 chromium_found = False
                 for browser in ['chromium-browser', 'chromium']:
@@ -10096,12 +10096,12 @@ Based on the above context, please answer: {input_text}"""
                         chromium_found = True
                         break
                 if not chromium_found:
-                    self.display_chat_system_message("No Chromium browser found (run: sudo apt install chromium-browser)")
+                    self.display_system_message("No Chromium browser found (run: sudo apt install chromium-browser)")
 
                 try:
                     browser_result = subprocess.run(['xdg-settings', 'get', 'default-web-browser'], capture_output=True, text=True)
                     if browser_result.returncode != 0:
-                        self.display_chat_system_message("No default browser set (common on fresh ARM Ubuntu)")
+                        self.display_system_message("No default browser set (common on fresh ARM Ubuntu)")
                 except:
                     pass
             except Exception:
@@ -10114,7 +10114,7 @@ Based on the above context, please answer: {input_text}"""
                 subprocess.run(['xdg-open', html_path], check=True, capture_output=True, timeout=10)
                 browser_opened = True
             except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-                self.display_chat_system_message(f"xdg-open failed: {e}")
+                self.display_system_message(f"xdg-open failed: {e}")
 
             # Method 2: Try standard webbrowser.open with file:// URL
             if not browser_opened:
@@ -10123,7 +10123,7 @@ Based on the above context, please answer: {input_text}"""
                     browser_opened = True
                     pass  # opened successfully
                 except Exception as e:
-                    self.display_chat_system_message(f"webbrowser.open failed: {e}")
+                    self.display_system_message(f"webbrowser.open failed: {e}")
 
             # Method 3: Try with different browsers directly (ARM-compatible)
             if not browser_opened:
@@ -10138,8 +10138,8 @@ Based on the above context, please answer: {input_text}"""
 
             # Method 4: Last resort - show file path for manual opening
             if not browser_opened:
-                self.display_chat_system_message(f"Could not auto-open browser. Open file://{html_path} manually")
-                self.display_chat_system_message("Tip: sudo apt install chromium-browser xdg-utils")
+                self.display_system_message(f"Could not auto-open browser. Open file://{html_path} manually")
+                self.display_system_message("Tip: sudo apt install chromium-browser xdg-utils")
 
             # Display success/status to user via system messages
             line_count = html_code.count('\n') + 1
@@ -10215,9 +10215,9 @@ Based on the above context, please answer: {input_text}"""
         if is_html_mode:
             if hasattr(self, 'capture_browser_errors'):
                 cap = 'ON' if self.capture_browser_errors.get() else 'OFF'
-                self.display_chat_system_message(f"Capture Browser Errors: {cap}")
+                self.display_system_message(f"Capture Browser Errors: {cap}")
                 if cap == 'ON':
-                    self.display_chat_system_message("Note: Browser line numbers include +3 line offset due to capture hook")
+                    self.display_system_message("Note: Browser line numbers include +3 line offset due to capture hook")
             self._execute_html_code(code_to_run)
             return
 
@@ -10389,8 +10389,8 @@ Based on the above context, please answer: {input_text}"""
 Return the COMPLETE fixed program in a single ```{language} code block. Do not skip any part of the code."""
             mode_label = "full code"
         else:
-            # TARGETED FIX MODE (default): just explain the bug and show corrected lines
-            prompt = f"""Fix this {code_type} program.
+            # TARGETED FIX MODE (default): return only the fixed functions
+            prompt = f"""Fix this {code_type} program:
 
 ```{language}
 {code_content}
@@ -10398,12 +10398,8 @@ Return the COMPLETE fixed program in a single ```{language} code block. Do not s
 {error_section}
 {problem_desc}
 
-RULES — follow ALL of these strictly:
-1. Say what's wrong in 1-2 sentences.
-2. Put ALL changes in ONE ```{language} code block — every function that needs ANY change must be included as a COMPLETE function. If a one-line fix is inside update(), include the full update() function.
-3. Do NOT return the entire program — only the changed functions. Maximum 50 lines of code.
-4. Do NOT put code outside the code block. No loose lines, no "also change this" instructions.
-5. No comments like 'ADD THIS' or 'rest of code unchanged'."""
+One sentence: what is wrong.
+Then ONE ```{language} code block with ONLY the fixed functions. Not the whole program."""
             mode_label = "targeted fix"
 
         # Display what we're sending
@@ -10419,11 +10415,11 @@ RULES — follow ALL of these strictly:
 
         self.display_message("You", display_message)
 
-        # Surface info in chat
+        # Surface fix status in system console
         if self.last_run_stderr and self.last_run_stderr.strip():
-            self.display_chat_system_message(f"--- {mode_label} mode — error: {self.last_run_stderr.strip().split(chr(10))[-1]}")
+            self.display_system_message(f"--- {mode_label} mode — error: {self.last_run_stderr.strip().split(chr(10))[-1]}")
         else:
-            self.display_chat_system_message(f"Fix request sent ({mode_label} mode)")
+            self.display_system_message(f"Fix request sent ({mode_label} mode)")
 
         # Clear input box
         self.user_input.delete("1.0", tk.END)
@@ -10434,17 +10430,16 @@ RULES — follow ALL of these strictly:
         # Use a fix-specific system message (the normal one says "include all features"
         # which contradicts fix mode's "only return changed functions").
         fix_system_message = {'role': 'system', 'content':
-            f"You are an expert {code_type} debugger. "
-            "You find bugs and return ONLY the fixed functions in a single code block. "
-            "Never return the entire program."}
+            "You are a code debugger. Return ONLY the fixed functions in a code block. "
+            "Not the whole program."}
         self._pre_fix_messages = list(self.messages)
         self.messages = [
             fix_system_message,
             {'role': 'user', 'content': prompt}
         ]
 
-        # Log what we're sending (user-facing status)
-        self.display_chat_system_message(f"FIX MODE: sending {len(self.messages)} messages (system + fix prompt), {len(prompt)} chars")
+        # Log what we're sending (user-facing status in system console)
+        self.display_system_message(f"FIX MODE: sending {len(self.messages)} messages (system + fix prompt), {len(prompt)} chars")
 
         # Disable input while processing
         self.user_input.config(state=tk.DISABLED)
@@ -10549,154 +10544,200 @@ RULES — follow ALL of these strictly:
     def _merge_partial_fix(self, full_code, fragment):
         """Merge a partial code fragment back into the full program.
 
-        When the LLM returns only the corrected sections (which may span
-        multiple disjoint locations, e.g. fixes to 3 different classes),
-        this uses SequenceMatcher opcodes to apply ONLY the changes while
-        keeping all original code that isn't in the fragment.
+        Layered approach — tries the most reliable method first:
+          1. Function-name matching: find functions by name in both the
+             original and fragment, swap matched ones in-place.
+          2. SequenceMatcher fallback: for non-function code or when
+             function names don't match, align via longest common
+             subsequences and splice in changes.
 
-        Key insight: lines in the full program that don't appear in the
-        fragment are NOT deletions — the fragment is just partial. So we
-        keep all 'delete' opcodes (lines only in full_code) and apply
-        'replace' opcodes (the actual fixes).
-
-        Returns the merged code string, or None if the fragment doesn't
-        look like a partial fix.
+        Returns the merged code string, or None if merging failed.
         """
-        import textwrap
-
         full_lines = full_code.splitlines()
         frag_lines = fragment.splitlines()
 
-        # If the fragment is nearly the same size as the full code, it's
-        # probably a full replacement — let the caller diff it directly.
-        # But allow large fragments (e.g. full <script> block) as long as
-        # they don't cover the ENTIRE file.
+        # If the fragment is nearly the full program, let caller diff directly
         if len(frag_lines) > len(full_lines) * 0.95:
             return None
-
-        # Very short fragments (< 3 lines) are too risky to auto-place.
         if len(frag_lines) < 3:
             return None
 
-        # Try matching with original indentation first
-        result = self._try_opcode_merge(full_lines, frag_lines)
-        if result is not None:
-            merged = '\n'.join(result)
-            if full_code.endswith('\n'):
-                merged += '\n'
-            return merged
+        # --- LAYER 1: function-name replacement (deterministic) ---
+        is_js = '<script' in full_code or 'function ' in full_code
+        if is_js:
+            merged = self._merge_by_function_name(full_lines, frag_lines, lang='js')
+        else:
+            merged = self._merge_by_function_name(full_lines, frag_lines, lang='python')
 
-        # If that failed, the LLM may have added extra indentation.
-        # Strip common leading whitespace and retry.
-        dedented = textwrap.dedent(fragment)
-        if dedented != fragment:
-            dedented_lines = dedented.splitlines()
-            result = self._try_opcode_merge(full_lines, dedented_lines)
-            if result is not None:
-                merged = '\n'.join(result)
-                if full_code.endswith('\n'):
-                    merged += '\n'
-                return merged
+        if merged is not None:
+            result = '\n'.join(merged)
+            if full_code.endswith('\n'):
+                result += '\n'
+            return result
+
+        # --- LAYER 2: SequenceMatcher with edge protection ---
+        merged = self._merge_by_sequence_match(full_lines, frag_lines)
+        if merged is not None:
+            result = '\n'.join(merged)
+            if full_code.endswith('\n'):
+                result += '\n'
+            return result
 
         return None
 
-    def _try_opcode_merge(self, full_lines, frag_lines):
-        """Try to merge frag_lines into full_lines using SequenceMatcher opcodes.
+    # ---- Layer 1: function-name merge ----
 
-        Returns merged line list, or None if alignment is too poor.
+    def _find_functions(self, lines, lang):
+        """Find function boundaries in code. Returns dict of name -> (start, end).
+
+        JS patterns: function name(, async function name(, name(args) {,
+                     const/let/var name = function(, name: function(,
+                     name = (args) =>
+        Python patterns: def name(  at any indent (includes decorators above)
+        """
+        functions = {}
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+
+            if lang == 'js':
+                name = self._match_js_func_start(stripped)
+                if name:
+                    end = self._find_brace_end(lines, i)
+                    functions[name] = (i, end)
+                    i = end
+                    continue
+            else:
+                m = re.match(r'^(\s*)def\s+(\w+)\s*\(', line)
+                if m:
+                    indent = len(m.group(1))
+                    name = m.group(2)
+                    start = i
+                    while start > 0 and lines[start - 1].strip().startswith('@'):
+                        start -= 1
+                    end = i + 1
+                    while end < len(lines):
+                        s = lines[end].strip()
+                        if s == '':
+                            end += 1
+                            continue
+                        if (len(lines[end]) - len(lines[end].lstrip())) <= indent:
+                            break
+                        end += 1
+                    functions[name] = (start, end)
+                    i = end
+                    continue
+            i += 1
+        return functions
+
+    def _match_js_func_start(self, stripped):
+        """Return function name if this line starts a JS function, else None."""
+        # function name(  /  async function name(
+        m = re.match(r'(?:async\s+)?function\s+(\w+)\s*\(', stripped)
+        if m:
+            return m.group(1)
+        # const/let/var name = function(  or  = async function(  or  = (...) =>
+        m = re.match(r'(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|\w+\s*=>)', stripped)
+        if m:
+            return m.group(1)
+        # name: function(  (object literal / class)
+        m = re.match(r'(\w+)\s*:\s*(?:async\s+)?function\s*\(', stripped)
+        if m:
+            return m.group(1)
+        # name(args) {  (class method shorthand) — but not if/for/while/switch
+        m = re.match(r'(\w+)\s*\([^)]*\)\s*\{', stripped)
+        if m and m.group(1) not in ('if', 'for', 'while', 'switch', 'catch', 'else'):
+            return m.group(1)
+        return None
+
+    def _find_brace_end(self, lines, start):
+        """Find closing brace for a JS function starting at `start`. Returns end line index."""
+        depth = 0
+        for j in range(start, len(lines)):
+            depth += lines[j].count('{') - lines[j].count('}')
+            if depth <= 0 and j > start:
+                return j + 1
+        return len(lines)
+
+    def _merge_by_function_name(self, full_lines, frag_lines, lang):
+        """Replace functions in full_lines with same-named functions from frag_lines."""
+        orig_funcs = self._find_functions(full_lines, lang)
+        fix_funcs = self._find_functions(frag_lines, lang)
+
+        if not fix_funcs:
+            return None
+
+        matched = set(fix_funcs.keys()) & set(orig_funcs.keys())
+        if not matched:
+            return None
+
+        result = list(full_lines)
+        # Replace in reverse order so indices stay valid
+        for name in sorted(matched, key=lambda n: orig_funcs[n][0], reverse=True):
+            orig_start, orig_end = orig_funcs[name]
+            fix_start, fix_end = fix_funcs[name]
+            result[orig_start:orig_end] = frag_lines[fix_start:fix_end]
+
+        if len(result) < len(full_lines) * 0.5:
+            return None
+        return result
+
+    # ---- Layer 2: SequenceMatcher merge with edge protection ----
+
+    def _merge_by_sequence_match(self, full_lines, frag_lines):
+        """Align fragment into full code using SequenceMatcher opcodes.
+
+        Key rules:
+          - 'equal' regions anchor the alignment
+          - 'delete' = lines only in full code -> KEEP (fragment is partial)
+          - 'replace' inside anchored region -> use fragment (the fix)
+          - 'replace' outside anchored region -> keep original (HTML header etc)
+          - 'insert' inside anchored region -> include (new code from fix)
         """
         sm = difflib.SequenceMatcher(None, full_lines, frag_lines, autojunk=False)
         opcodes = sm.get_opcodes()
-
-        # Check we have enough matching context to trust the alignment
         total_equal = sum(i2 - i1 for tag, i1, i2, j1, j2 in opcodes if tag == 'equal')
 
-        reindent = False
-        if total_equal < 2:
-            # Indentation mismatch — retry with whitespace-stripped comparison.
-            # Opcodes from stripped comparison still map to original arrays by index.
-            full_stripped = [l.strip() for l in full_lines]
-            frag_stripped = [l.strip() for l in frag_lines]
-            sm = difflib.SequenceMatcher(None, full_stripped, frag_stripped, autojunk=False)
+        if total_equal < 3:
+            # Try stripped comparison for indentation mismatches
+            full_s = [l.strip() for l in full_lines]
+            frag_s = [l.strip() for l in frag_lines]
+            sm = difflib.SequenceMatcher(None, full_s, frag_s, autojunk=False)
             opcodes = sm.get_opcodes()
             total_equal = sum(i2 - i1 for tag, i1, i2, j1, j2 in opcodes if tag == 'equal')
-            if total_equal < 2:
-                return None  # Not enough context lines matched even stripped
-            reindent = True  # Fragment lines need indentation adjustment
+            if total_equal < 3:
+                return None
 
-        # Find first and last 'equal' opcode — these mark the region
-        # of the full code that the fragment actually covers.
-        # Anything OUTSIDE this region (e.g. HTML header, closing tags)
-        # must be preserved exactly as-is.
-        first_equal_idx = None
-        last_equal_idx = None
-        for idx, (tag, i1, i2, j1, j2) in enumerate(opcodes):
+        # Find anchored region (between first and last equal blocks)
+        first_eq = last_eq = None
+        for idx, (tag, *_) in enumerate(opcodes):
             if tag == 'equal':
-                if first_equal_idx is None:
-                    first_equal_idx = idx
-                last_equal_idx = idx
-
-        if first_equal_idx is None:
-            return None  # No matching context at all
-
-        def _reindent_lines(orig_lines, frag_lines_slice, orig_start, frag_start):
-            """Adjust fragment lines to match the indentation of the original."""
-            if not reindent or not orig_lines or not frag_lines_slice:
-                return list(frag_lines_slice)
-            # Detect indent from first non-blank line in each
-            def _get_indent(lines):
-                for l in lines:
-                    if l.strip():
-                        return len(l) - len(l.lstrip())
-                return 0
-            orig_indent = _get_indent(orig_lines)
-            frag_indent = _get_indent(frag_lines_slice)
-            diff = orig_indent - frag_indent
-            if diff == 0:
-                return list(frag_lines_slice)
-            adjusted = []
-            for fl in frag_lines_slice:
-                if diff > 0:
-                    adjusted.append(' ' * diff + fl)
-                else:
-                    remove = min(-diff, len(fl) - len(fl.lstrip()))
-                    adjusted.append(fl[remove:])
-            return adjusted
-
-        # Build merged result using opcodes:
-        #   equal   -> keep original (same in both, preserves original indentation)
-        #   replace -> use fragment's version (the actual fix), reindented if needed
-        #              EXCEPT at edges (before first / after last equal):
-        #              keep original to preserve HTML header, closing tags, etc.
-        #   delete  -> KEEP original lines (not in fragment, but belong in program)
-        #   insert  -> include new lines from fragment (reindented)
-        #              EXCEPT at edges: skip (we don't know where to place them)
-        merged_lines = []
-        for idx, (tag, i1, i2, j1, j2) in enumerate(opcodes):
-            is_edge = (idx < first_equal_idx) or (idx > last_equal_idx)
-
-            if tag == 'equal':
-                merged_lines.extend(full_lines[i1:i2])
-            elif tag == 'replace':
-                if is_edge:
-                    # Edge replace: keep original (e.g. HTML header), skip fragment
-                    merged_lines.extend(full_lines[i1:i2])
-                else:
-                    # Interior replace: use fragment's version (the actual fix)
-                    adjusted = _reindent_lines(full_lines[i1:i2], frag_lines[j1:j2], i1, j1)
-                    merged_lines.extend(adjusted)
-            elif tag == 'delete':
-                merged_lines.extend(full_lines[i1:i2])
-            elif tag == 'insert':
-                if not is_edge:
-                    adjusted = _reindent_lines(full_lines[max(0,i1-1):i1], frag_lines[j1:j2], i1, j1)
-                    merged_lines.extend(adjusted)
-
-        # Safety net: merged should never be drastically shorter than original.
-        if len(merged_lines) < len(full_lines) * 0.85:
+                if first_eq is None:
+                    first_eq = idx
+                last_eq = idx
+        if first_eq is None:
             return None
 
-        return merged_lines
+        merged = []
+        for idx, (tag, i1, i2, j1, j2) in enumerate(opcodes):
+            inside = first_eq <= idx <= last_eq
+            if tag == 'equal':
+                merged.extend(full_lines[i1:i2])
+            elif tag == 'replace':
+                if inside:
+                    merged.extend(frag_lines[j1:j2])  # the fix
+                else:
+                    merged.extend(full_lines[i1:i2])  # preserve edge
+            elif tag == 'delete':
+                merged.extend(full_lines[i1:i2])  # keep — fragment is partial
+            elif tag == 'insert':
+                if inside:
+                    merged.extend(frag_lines[j1:j2])  # new lines from fix
+
+        if len(merged) < len(full_lines) * 0.85:
+            return None
+        return merged
 
     def move_code_to_ide(self):
         """Move code from chat to IDE.
@@ -10868,7 +10909,7 @@ RULES — follow ALL of these strictly:
         except Exception:
             pass
         status = "ON" if enabled else "OFF"
-        self.display_chat_system_message(f"Capture Browser Errors: {status}")
+        self.display_system_message(f"Capture Browser Errors: {status}")
         # Start/stop the error server on demand
         try:
             if enabled:
@@ -11601,7 +11642,7 @@ RULES — follow ALL of these strictly:
         - File metadata
         """
         # Show analysis in system messages window (user-facing, not debug)
-        msg = self.display_chat_system_message
+        msg = self.display_system_message
 
         if filename:
             line_count = content.count('\n') + 1
