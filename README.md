@@ -34,7 +34,7 @@ cp .env.example .env
 ### 3. Run
 
 ```bash
-python CodeRunner_IDE_2_8_26.py
+python CodeRunner_IDE_clean.py
 ```
 
 ### 4. Use It
@@ -45,7 +45,7 @@ python CodeRunner_IDE_2_8_26.py
 4. Click **Move to IDE**
 5. Press **F6** (Run & Fix)
 6. If it crashes, the LLM auto-fixes it. You see a diff. Press **Ctrl+Enter** to Accept.
-7. If it runs but something is wrong, type what's wrong in chat and click **Ask LLM to Fix**
+7. If it runs but something is wrong, type what's wrong in chat and click **LLM Fix**
 
 That's the whole workflow.
 
@@ -57,14 +57,15 @@ Most AI coding tools require cloud APIs. CodeRunner lets you use **your own loca
 
 ---
 
-## The Two Buttons That Matter
+## The Three Buttons That Matter
 
-| Button | Shortcut | What It Does |
+| Button | Location | What It Does |
 |--------|----------|--------------|
-| **Run & Fix** | `F6` | Runs your code. If it crashes, automatically sends the error to the LLM, gets a fix, and shows you a color-coded diff. |
-| **Ask LLM to Fix** | *(toolbar)* | Code runs but does the wrong thing? Type what's wrong in the chat box, then click this. LLM reads your whole file and returns only the changes. |
+| **Run & Fix** | IDE toolbar (`F6`) | Runs your code. If it crashes, automatically sends the error to the LLM, gets a fix, and shows you a color-coded diff. |
+| **LLM Fix** | Chat + IDE toolbar | Code runs but does the wrong thing? Type what's wrong in the chat box, then click this. LLM reads your whole file and returns only the changed functions. |
+| **Run** | IDE toolbar (`F5`) | Just run — no LLM involved. |
 
-There's also **Run** (`F5`) if you just want to run without involving the LLM.
+The **LLM Fix** button appears in both the main chat window and the IDE toolbar for convenience.
 
 ---
 
@@ -77,7 +78,7 @@ There's also **Run** (`F5`) if you just want to run without involving the LLM.
 4. If it crashes  ->  LLM auto-fixes  ->  you see the diff  ->  Accept or Reject
 5. If it runs but something is wrong:
      a. Type what's wrong in the chat box ("the ball goes through the paddle")
-     b. Click "Ask LLM to Fix"
+     b. Click "LLM Fix"
      c. LLM fixes it  ->  you see the diff  ->  Accept or Reject
 6. Repeat until it works
 ```
@@ -91,9 +92,26 @@ Just describe what's wrong in plain English. The LLM reads your entire program, 
 | Phase | What You Do | What the LLM Returns |
 |-------|-------------|---------------------|
 | **First shot** | Ask the LLM to write code from scratch | Full program |
-| **Fixing** | Describe what's wrong, click "Ask LLM to Fix" | Only the changed lines (SEARCH/REPLACE blocks) |
+| **Fixing** | Describe what's wrong, click "LLM Fix" | Only the changed functions (merged into your code) |
 
-The **"Fast edits (only changed parts)"** checkbox (ON by default) tells the LLM to return targeted edits instead of regenerating the whole file.
+### How Fix Mode Works
+
+When you click **LLM Fix**, CodeRunner sends only **two messages** to the LLM:
+
+1. A **fix-specific system message** ("You are an expert debugger...")
+2. The **fix prompt** (your full current code + errors + rules)
+
+The full conversation history is **not** sent. This prevents weak local LLMs from seeing old "write me a game" requests and regenerating the entire program. After the LLM responds, the full history is restored so your chat stays intact.
+
+The fix prompt includes strict rules:
+- Say what's wrong in 1-2 sentences
+- Put ALL changes in ONE code block as complete functions
+- Do NOT return the entire program — maximum 50 lines
+- No loose instructions outside the code block
+
+### Partial Merge
+
+When the LLM returns only changed functions, CodeRunner **merges them back** into your full program using `SequenceMatcher` opcodes. Lines not in the LLM's response are kept as-is — they're not deletions, just parts the LLM didn't need to change.
 
 ### Accept & Reject
 
@@ -121,16 +139,18 @@ The editor is read-only while showing the diff so you can't accidentally edit du
 |---------|-------------|----------|
 | **Ollama** | Easy local model management | Quick setup, many models |
 | **GGUF** | llama.cpp quantized models | CPU inference, low VRAM |
-| **MLX** | Apple Silicon optimized | M1/M2/M3/M4 Macs |
+| **MLX** | Apple Silicon optimized | M1/M2/M3/M4 Macs (default on macOS) |
 | **vLLM** | High-throughput inference | NVIDIA GPUs, production |
-| **Transformers** | HuggingFace models | Latest models, fine-tuning |
+| **Transformers** | HuggingFace models | Latest models (default on Linux) |
 | **Blackwell** | NVIDIA Blackwell/DGX | Cutting-edge NVIDIA hardware |
 | **Claude** | Anthropic API | Best cloud coding model |
 | **OpenAI** | OpenAI API (GPT-4/5) | Cloud fallback |
 
+**Platform-aware defaults**: MLX is auto-selected on macOS (Apple Silicon), Transformers on Linux. Falls back to Claude if neither is available.
+
 ### SEARCH/REPLACE Block Editing
 
-When fixing code, the LLM returns only the parts that changed using a structured format:
+When fixing code, the LLM can return only the parts that changed using a structured format:
 
 ```
 <<<<<<< SEARCH
@@ -141,6 +161,22 @@ replacement lines
 ```
 
 CodeRunner automatically parses these blocks and applies them to your file — you never have to manually find and replace. If an exact match fails, fuzzy matching kicks in. This is what makes the fix loop fast: the LLM only sends a few lines instead of regenerating 500+ lines.
+
+### Chat Edit Sync
+
+You can **cut and paste** directly in the chat display to edit conversation history. When you click **Send**, CodeRunner rebuilds the message list from the visible chat text. This means you can:
+
+- Delete old messages by cutting them out
+- Edit previous prompts before resending
+- Clean up the context the LLM sees
+
+### Three-Window Layout
+
+| Window | Purpose |
+|--------|---------|
+| **Chat** | Your conversation with the LLM. Editable — changes affect what the LLM sees. |
+| **System Messages** | Status info for the user: file creation, code analysis, browser diagnostics, fix mode status. |
+| **Debug Console** | Runtime errors only — stderr/stdout from your generated code. Clickable line numbers jump to the IDE. |
 
 ### Token Counters & Speed Metrics
 
@@ -161,6 +197,7 @@ The chat header shows real-time stats for every message:
 - Find & Replace (`Ctrl+F`)
 - Inline diff view with Accept/Reject
 - Run & Fix (`F6`) — the main workflow button
+- LLM Fix button — also available in the chat window
 - Welcome message on first open with quick-start instructions
 - F1 opens beginner-focused help
 
@@ -169,6 +206,7 @@ The chat header shows real-time stats for every message:
 - **Clickable error lines** in the debug console — click to jump to the line
 - **Browser error capture** — catches JavaScript errors from HTML games via a local error server
 - **Auto-fix pipeline** — Run & Fix detects errors, sends them to LLM, shows the diff, all in one keystroke
+- **Code analysis** — automatic structure analysis (imports, classes, functions, patterns) shown in system messages when code is loaded
 
 ### Visual Feedback
 
@@ -176,14 +214,6 @@ The chat header shows real-time stats for every message:
 - Status label shows bold red **"Fixing..."** when the LLM is working
 - Accept button flashes green when a diff arrives
 - IDE window comes to front automatically when the diff is ready
-
-### RAG (Retrieval Augmented Generation)
-
-Give your local LLM context from your codebase:
-
-1. Click "Index Folder" and select your project
-2. Enable "RAG" toggle
-3. Ask questions — the AI searches your codebase for relevant context
 
 ### Game Presets
 
@@ -193,15 +223,14 @@ Space Invaders, Asteroids, Breakout, Pac-Man, Frogger, Centipede, Defender, Flap
 
 Select from the dropdown and hit Send.
 
-### Temperature Presets
+### Defaults
 
-| Preset | Value | Use For |
-|--------|-------|---------|
-| Code Exact | 0.15 | Precise code changes |
-| Precise | 0.2 | Bug fixes |
-| Game | 0.35 | Game development (default for programmer modes) |
-| Balanced | 0.5 | General coding |
-| Creative | 0.8 | Brainstorming, creative writing |
+| Setting | Default | Notes |
+|---------|---------|-------|
+| Temperature | 0.1 | Low for deterministic one-shot generation on local LLMs |
+| Top-p | 0.5 | Nucleus sampling cutoff |
+| Max tokens | 16,000 | Enough for full game generation |
+| Backend | MLX (macOS) / Transformers (Linux) | Auto-detected based on platform |
 
 ---
 
@@ -230,13 +259,13 @@ Mac users: `Cmd` works in place of `Ctrl` for all shortcuts.
 +----------------------------------------------------------------+
 |  IDE Toolbar:                                                   |
 |  [New][Save][Load][Find] | [Run][Run&Fix][Timed] |             |
-|  [Ask LLM to Fix] | [Accept][Reject]          Status: Ready    |
+|  [LLM Fix] | [Accept][Reject]             Status: Ready        |
 +------------------+-----------------+---------------------------+
-|   Chat Panel     |   Code Editor   |    Debug Console           |
+|   Chat Panel     |   Code Editor   |  System / Debug Console    |
 |                  |                 |                            |
-|  [User Input]    |  [Your Code]    |  [Errors & Output]         |
-|  [AI Response]   |  [Diff View]    |  [Click to Navigate]       |
-|  [Move to IDE]   |  [Accept/Rej]   |  [Browser Errors]          |
+|  [User Input]    |  [Your Code]    |  System: status, analysis  |
+|  [AI Response]   |  [Diff View]    |  Debug: runtime errors     |
+|  [Send][LLM Fix] |  [Accept/Rej]   |  [Click to Navigate]       |
 +------------------+-----------------+---------------------------+
          |                 |                    |
          v                 v                    v
@@ -253,6 +282,12 @@ Mac users: `Cmd` works in place of `Ctrl` for all shortcuts.
 [Move to IDE] [Open IDE]  Chat History:  00:42  In:1,234 Out:567 | Total In:5,678 Out:2,345 (42.3 tok/s)
 ```
 
+### Chat Input Bar
+
+```
+[User Input Box]  [Send] [Send + Search] [LLM Fix]
+```
+
 ### Context Menu (Right-Click in Editor)
 
 - **Code**: Run, Run & Fix, Fix with LLM
@@ -267,14 +302,13 @@ Mac users: `Cmd` works in place of `Ctrl` for all shortcuts.
 
 ## System Prompts
 
-| Mode | Description |
-|------|-------------|
-| **Python Programmer** | PyGame games, structured code, console debugging, SEARCH/REPLACE fixes |
-| **HTML Programmer** | Canvas games, self-contained (no external files), SEARCH/REPLACE fixes |
-| **Helpful Assistant** | General purpose conversation |
-| **Therapist** | Supportive conversation |
+| Mode | System Message |
+|------|----------------|
+| **Python Programmer** | Expert Python/PyGame programmer. Include all features, console debugging. |
+| **HTML Programmer** | Expert HTML5/Canvas programmer. No external files, Canvas drawing only. |
+| **Fix Mode** (automatic) | Expert debugger. Return ONLY fixed functions in a single code block. Never return the entire program. |
 
-All programmer modes include a base instruction to return SEARCH/REPLACE blocks when fixing code. The "Fast edits" checkbox adds detailed format instructions on top.
+Fix mode uses its own system message that replaces the generation-focused one. This prevents contradictory instructions ("include all features" vs "only return changed functions").
 
 Custom prompts can be edited directly in the UI via the system prompt editor.
 
@@ -310,12 +344,6 @@ Or place them in `anthropic_key.txt` / `openai_key.txt` next to the script.
 
 ```bash
 pip install ollama requests pillow python-dotenv
-```
-
-### RAG (optional)
-
-```bash
-pip install chromadb langchain-text-splitters langchain-community
 ```
 
 ### Local Backends (install as needed)
@@ -368,7 +396,7 @@ sudo apt-get install python3-tk
 
 ```
 Code_Runner/
-  CodeRunner_IDE_2_8_26.py   # Main application (single file)
+  CodeRunner_IDE_clean.py    # Main application (single file)
   requirements.txt           # Python dependencies
   config.json                # Saved configuration
   .env.example               # API key template
