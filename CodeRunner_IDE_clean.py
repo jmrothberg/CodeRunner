@@ -65,7 +65,10 @@ try:
 except ImportError:
     pass  # dotenv not installed, will use env vars directly
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# Do NOT set CUDA_VISIBLE_DEVICES here: pinning to a single GPU hides other cards from
+# PyTorch (device_count()==1), breaks Transformers multi-GPU load, and triggers OOM on
+# large models. To use one GPU only, set in the shell before launch, e.g.:
+#   CUDA_VISIBLE_DEVICES=0 python CodeRunner_IDE_clean.py
 os.environ["TRITON_DISABLE_CACHE"] = "1" 
 
 # Try to import ollama (optional dependency)
@@ -8044,6 +8047,15 @@ Based on the above context, please answer: {input_text}"""
             return error_msg
 
         try:
+            if platform.system() != "Darwin":
+                try:
+                    import transformers.utils.generic as _tf_generic
+                    # Transformers may detect a broken Linux MLX install by package metadata only.
+                    # Disable the MLX tensor probe so Accelerate output handling does not import mlx.core.
+                    _tf_generic._is_mlx_available = False
+                except Exception:
+                    pass
+
             # Format messages for transformers (similar to chat format)
             messages = []
 
@@ -8174,9 +8186,11 @@ Based on the above context, please answer: {input_text}"""
                 self.add_to_debug_console("MISTRALCOMMONBACKEND TOKENS CREATED DIRECTLY")
                 self.add_to_debug_console("="*30)
 
-            # Ensure inputs are on GPU (standard pattern)
-            device = next(self.transformers_model.parameters()).device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            # For device_map="auto", inputs must match model.device (embedding layer), not an arbitrary parameter.
+            infer_dev = getattr(self.transformers_model, "device", None)
+            if infer_dev is None or getattr(infer_dev, "type", "") == "meta":
+                infer_dev = next(self.transformers_model.parameters()).device
+            inputs = {k: v.to(infer_dev) for k, v in inputs.items()}
 
             # Get max tokens from UI
             max_new_tokens = int(self.max_tokens_var.get())
@@ -8445,7 +8459,10 @@ Based on the above context, please answer: {input_text}"""
             return clean_response
 
         except Exception as e:
+            import traceback
             error_msg = str(e)
+            # One traceback per failed Transformers generation; needed to identify the exact failing backend/module.
+            self.add_to_debug_console("Transformers generation traceback:\n" + traceback.format_exc())
             # Check for Triton/MXFP4 issues during generation
             if "triton" in error_msg.lower() and ("mxfp4" in error_msg.lower() or "quantization" in error_msg.lower() or "ptxas" in error_msg.lower()):
                 error_msg = "MXFP4 kernel error during generation. The model loaded but MXFP4 quantization failed on ARM. Performance will be degraded. Consider converting the model to a different quantization format."
@@ -10770,21 +10787,53 @@ Based on the above context, please answer: {input_text}"""
             is_gpt_oss_model = "gpt-oss" in model_path.lower()
             is_devstral_model = "devstral" in model_path.lower()
 
+            # device_map={"": "cuda:0"} pins the full weights on one GPU — OOM on single 24GB for large models.
+            # With 2+ GPUs, device_map="auto" + max_memory spreads layers (requires accelerate; ships with transformers).
+            n_gpu = torch.cuda.device_count() if torch.cuda.is_available() else 0
+            if n_gpu > 1:
+                max_memory = {}
+                for i in range(n_gpu):
+                    total_gb = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+                    # Tighter cap: a ~22GiB single allocation can fail on 24GB if we only leave 2GiB.
+                    cap_gb = max(4, int(total_gb - 3))
+                    max_memory[i] = f"{cap_gb}GiB"
+                tfm_device_kwargs = {"device_map": "auto", "max_memory": max_memory}
+                self.add_to_debug_console(
+                    f"Multi-GPU Transformers load: {n_gpu} CUDA device(s), max_memory={max_memory}"
+                )
+            else:
+                tfm_device_kwargs = {"device_map": {"": "cuda:0"}}
+
+            # HF transformers stores some hub-kernel versions as ints (version=1), but this
+            # installed kernels package expects a version specifier string or None. The FP8
+            # repo has no v1 tag here, so use the repo default ("main") instead of version=1.
+            try:
+                if platform.system() != "Darwin":
+                    import transformers.utils.generic as _tf_generic
+                    # Do not let Transformers probe MLX on Linux; package metadata can exist
+                    # even when mlx.core cannot load libmlx.so.
+                    _tf_generic._is_mlx_available = False
+                from transformers.integrations import hub_kernels as _hf_hub_kernels
+                for _kernel_name, _kernel_cfg in getattr(_hf_hub_kernels, "_HUB_KERNEL_MAPPING", {}).items():
+                    if _kernel_name in ("finegrained-fp8", "deep-gemm") and isinstance(_kernel_cfg.get("version"), int):
+                        _kernel_cfg["version"] = None
+            except Exception as _kernel_patch_error:
+                self.add_to_debug_console(f"HF kernel version patch skipped: {_kernel_patch_error}")
+
             # Standard transformers loading
             # (environment variables already set globally at import time)
             if is_devstral_model:
                 # Devstral models work with MistralForCausalLM
                 # FIXED: Removed torch_dtype - let transformers auto-detect (matches gptoss.py)
-                # device_map={"": "cuda:0"} ensures explicit GPU placement (not "auto")
-                # use_cache=True enables KV caching for faster inference
                 self.add_to_debug_console("🔷 Detected Devstral model - using MistralForCausalLM")
                 try:
+                    # Do not pass use_cache to from_pretrained — it is forwarded to the model __init__
+                    # and Qwen/Mistral variants may reject it (KV cache: config.use_cache or generate()).
                     self.transformers_model = MistralForCausalLM.from_pretrained(
                         model_path,
-                        device_map={"": "cuda:0"},
                         trust_remote_code=True,
-                        use_cache=True,  # Enable KV caching for faster inference (matches gptoss.py)
                         low_cpu_mem_usage=True,
+                        **tfm_device_kwargs,
                     )
                     self.add_to_debug_console("✅ Mistral model loading successful!")
                 except Exception as e:
@@ -10793,13 +10842,15 @@ Based on the above context, please answer: {input_text}"""
                     raise
             else:
                 # Standard transformers loading
+                # use_cache must not be passed here — from_pretrained forwards kwargs to model __init__;
+                # Qwen3_5ForCausalLM raises: unexpected keyword argument 'use_cache'.
                 self.transformers_model = AutoModelForCausalLM.from_pretrained(
                     model_path,
-                    device_map={"": "cuda:0"},
                     dtype="auto",
                     trust_remote_code=True,
-                    use_cache=True,
-                    local_files_only=True
+                    local_files_only=True,
+                    low_cpu_mem_usage=True,
+                    **tfm_device_kwargs,
                 )
                 self.add_to_debug_console("✅ Model loading successful")
 
@@ -10808,28 +10859,40 @@ Based on the above context, please answer: {input_text}"""
             # Set to eval mode
             self.transformers_model.eval()
 
-            # Verify model is on GPU (standard transformers check)
-            device = next(self.transformers_model.parameters()).device
-            if device.type != 'cuda':
-                self.add_to_debug_console(f"⚠️ WARNING: Model loaded on {device.type}, not GPU!")
+            # Sharded models: check any CUDA param (not first param — order is undefined across HF versions).
+            cuda_devs = sorted(
+                {str(p.device) for p in self.transformers_model.parameters() if p.device.type == "cuda"}
+            )
+            if not cuda_devs:
+                self.add_to_debug_console("⚠️ WARNING: No model parameters on CUDA!")
                 if torch.cuda.is_available():
                     self.add_to_debug_console("Attempting to move model to GPU...")
                     try:
                         self.transformers_model = self.transformers_model.to("cuda")
-                        device = next(self.transformers_model.parameters()).device
-                        self.add_to_debug_console(f"✅ Model moved to GPU: {device}")
+                        cuda_devs = sorted(
+                            {str(p.device) for p in self.transformers_model.parameters() if p.device.type == "cuda"}
+                        )
+                        self.add_to_debug_console(f"✅ Model moved to GPU: {cuda_devs}")
                     except Exception as e:
                         self.add_to_debug_console(f"❌ Failed to move to GPU: {e}")
                         raise Exception(f"Model could not be loaded on GPU: {e}")
                 else:
                     raise Exception("CUDA not available - cannot load model on GPU")
             else:
-                self.add_to_debug_console(f"✅ Model confirmed on GPU: {device}")
+                self.add_to_debug_console(f"✅ Model on CUDA: {cuda_devs}")
 
             # Update UI on successful load
             model_name = os.path.basename(model_path)
-            gpu_name = torch.cuda.get_device_name() if torch.cuda.is_available() else "CPU"
-            memory_gb = torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else 0
+            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                gpu_name = ", ".join(
+                    torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())
+                )
+                memory_gb = sum(
+                    torch.cuda.memory_allocated(i) for i in range(torch.cuda.device_count())
+                ) / (1024**3)
+            else:
+                gpu_name = "CPU"
+                memory_gb = 0
             self.root.after(0, lambda: self.model_status_label.config(text=f"Loaded: {model_name}", fg="green"))
             self.root.after(0, lambda: self.load_model_btn.config(state=tk.NORMAL, text="Load Model"))
             # Validate model numerics to catch CUDA assert issues early DISABLED
