@@ -37,7 +37,7 @@
 #   - _log_fix_event() → structured timestamped debug console entries
 #
 # Features:
-# - 8 LLM backends: Ollama, Transformers, Claude, OpenAI, GGUF, vLLM, MLX, Blackwell
+# - 9 LLM backends: Ollama, Transformers, EXL3, Claude, OpenAI, GGUF, vLLM, MLX, Blackwell
 # - Platform-aware defaults: MLX on macOS, Transformers on Linux
 # - Run (F5) + Run & Fix (F6) + LLM Fix button on chat and IDE
 # - Inline diff view with Accept (Ctrl+Enter) / Reject (Escape)
@@ -159,6 +159,22 @@ except Exception as e:
     VLLM_AVAILABLE = False
     print(f"vLLM available but has compatibility issues: {str(e)}")
     print("vLLM may require specific PyTorch versions that conflict with CUDA support")
+
+# Optional: ExLlamaV3 / EXL3 (NVIDIA CUDA). PyPI package may compile CUDA extensions — see README.
+EXLLAMAV3_AVAILABLE = False
+Exl3Generator = Exl3Job = Exl3_model_init = None  # Set when import succeeds
+try:
+    import torch as _exl3_gate
+    if _exl3_gate.cuda.is_available():
+        from exllamav3 import Generator as Exl3Generator, Job as Exl3Job, model_init as Exl3_model_init
+        EXLLAMAV3_AVAILABLE = True
+        print("ExLlamaV3 (EXL3) available — EXL3 backend for local quantized models")
+    else:
+        print("ExLlamaV3 (EXL3) skipped — no CUDA GPU detected")
+except ImportError:
+    print("ExLlamaV3 not installed — optional: pip install exllamav3 (see README; build may need CUDA toolkit)")
+except Exception as _exl3_err:
+    print(f"ExLlamaV3 unavailable: {_exl3_err}")
 
 # Import enhanced IDE features
 try:
@@ -1610,27 +1626,31 @@ def query_chromadb(query, collection_name, persist_dir, n_results=5):
     return results, None
 
 def find_gguf_models(base_path=None):
-    """Find all GGUF models, showing only the first file of multi-part series"""
+    """Find all GGUF models, showing only the first file of multi-part series.
+
+    When base_path is None, scans default roots per OS (Linux: /media/jonathan/data/GGUF_Models,
+    then /data/GGUF_Models; macOS: /Users/jonathanrothberg/GGUF_Models).
+    """
 
     if base_path is None:
-        # Auto-detect based on platform
         import platform
         if platform.system() == "Linux":
-            base_path = "/data/GGUF_Models"
-        else:  # macOS and others
-            base_path = "/Users/jonathanrothberg/GGUF_Models"
-    
-    if not os.path.exists(base_path):
-        print(f"GGUF directory {base_path} does not exist!")
-        return []
-    
-    # Find all .gguf files recursively (case insensitive)
+            search_paths = ["/media/jonathan/data/GGUF_Models", "/data/GGUF_Models"]
+        else:
+            search_paths = ["/Users/jonathanrothberg/GGUF_Models"]
+    else:
+        search_paths = [base_path]
+
+    # Find all .gguf files recursively (case insensitive) under every existing root
     gguf_files = []
-    for root, dirs, files in os.walk(base_path):
-        for file in files:
-            if file.lower().endswith('.gguf'):
-                full_path = os.path.join(root, file)
-                gguf_files.append(full_path)
+    for bp in search_paths:
+        if not bp or not os.path.isdir(bp):
+            continue
+        for root, dirs, files in os.walk(bp):
+            for file in files:
+                if file.lower().endswith(".gguf"):
+                    full_path = os.path.join(root, file)
+                    gguf_files.append(full_path)
     
     # Filter to show only first files of series (e.g., only -00001- files)
     filtered_models = {}
@@ -1826,6 +1846,63 @@ def get_available_transformers_models():
     except Exception as e:
         print(f"Error detecting Transformers models: {str(e)}")
         return []
+
+
+def get_exl3_model_root_paths():
+    """Directories to scan for EXL3 (ExLlamaV3) model folders. Override with CODERUNNER_EXL3_MODELS (one path or os.pathsep-separated list)."""
+    roots = []
+    env_val = os.environ.get("CODERUNNER_EXL3_MODELS", "").strip()
+    if env_val:
+        for part in env_val.split(os.pathsep):
+            p = part.strip()
+            if p:
+                roots.append(p)
+    roots.extend(
+        [
+            "/media/jonathan/data/Models_EXL3",
+            "/data/Models_EXL3",
+            os.path.join(os.path.expanduser("~"), "Models_EXL3"),
+        ]
+    )
+    # Preserve order, drop duplicates
+    return list(dict.fromkeys(roots))
+
+
+def _exl3_subdir_looks_like_model(item_path):
+    """Heuristic: EXL3 exports usually include tokenizer files + safetensors shards."""
+    if not os.path.isdir(item_path):
+        return False
+    has_tok = os.path.isfile(os.path.join(item_path, "tokenizer.json")) or os.path.isfile(
+        os.path.join(item_path, "tokenizer.model")
+    )
+    if not has_tok:
+        return False
+    try:
+        names = os.listdir(item_path)
+    except OSError:
+        return False
+    for n in names:
+        if n.endswith(".safetensors") or n.endswith(".exl3"):
+            return True
+    return False
+
+
+def get_available_exl3_models():
+    """Return sorted list of EXL3 model directory paths (filesystem scan; load still needs exllamav3 + CUDA)."""
+    model_dirs = []
+    for root in get_exl3_model_root_paths():
+        base = Path(root)
+        if not base.exists() or not base.is_dir():
+            continue
+        try:
+            for item in base.iterdir():
+                if item.is_dir() and _exl3_subdir_looks_like_model(str(item)):
+                    model_dirs.append(str(item))
+        except Exception as e:
+            print(f"Error scanning EXL3 directory {root}: {e}")
+    model_dirs.sort()
+    return model_dirs
+
 
 # ============================================================================
 # MINI MAX MODEL SUPPORT
@@ -4737,7 +4814,8 @@ class OllamaGUI:
             _default_backend = "transformers"
         else:
             _default_backend = "claude"
-        self.backend_var = StringVar(value=_default_backend)  # "ollama", "llama_cpp", "mlx", "vllm", "transformers", or "claude"
+        self.backend_var = StringVar(value=_default_backend)  # ollama, llama_cpp, mlx, vllm, transformers, exl3, claude, openai
+        self._current_backend_choice = None  # Used to unload EXL3 VRAM when switching away from EXL3 backend
         self.llama_cpp_model = None  # Will hold loaded llama-cpp-python model
         self.available_gguf_models = []  # List of available GGUF models
 
@@ -4764,6 +4842,16 @@ class OllamaGUI:
         self.transformers_tokenizer = None  # Will hold transformers tokenizer
         self.available_transformers_models = []  # List of available transformers models
         self.selected_transformers_path = StringVar()  # Currently selected transformers model path
+
+        # EXL3 / ExLlamaV3 backend (optional; NVIDIA CUDA)
+        self.exl3_model = None
+        self.exl3_config = None
+        self.exl3_cache = None
+        self.exl3_tokenizer = None
+        self.exl3_generator = None
+        self.exl3_cli_args = None  # argparse.Namespace for ExLlamaV3 model_init (sampling + cache); set on successful load
+        self.available_exl3_models = []
+        self.selected_exl3_path = StringVar()
 
 
         # Claude backend variables
@@ -5052,6 +5140,15 @@ class OllamaGUI:
             except Exception as e:
                 print(f"Error finding Transformers models: {str(e)}")
                 self.available_transformers_models = []
+
+        # Load available EXL3 model directories (see get_exl3_model_root_paths); runtime load needs exllamav3 + CUDA
+        try:
+            self.available_exl3_models = get_available_exl3_models()
+            if self.available_exl3_models:
+                self.selected_exl3_path.set(self.available_exl3_models[0])
+        except Exception as e:
+            print(f"Error finding EXL3 models: {str(e)}")
+            self.available_exl3_models = []
 
         # Create main interface
         self.create_widgets()
@@ -5565,6 +5662,10 @@ class OllamaGUI:
             Radiobutton(backend_select_frame, text="Transformers", variable=self.backend_var, value="transformers", command=self.change_backend).pack(side=tk.LEFT, padx=5)
         else:
             Label(backend_select_frame, text="(Transformers not available)", fg="gray").pack(side=tk.LEFT, padx=5)
+        if EXLLAMAV3_AVAILABLE:
+            Radiobutton(backend_select_frame, text="EXL3", variable=self.backend_var, value="exl3", command=self.change_backend).pack(side=tk.LEFT, padx=5)
+        else:
+            Label(backend_select_frame, text="(EXL3 unavailable)", fg="gray").pack(side=tk.LEFT, padx=5)
         Radiobutton(backend_select_frame, text="Claude", variable=self.backend_var, value="claude", command=self.change_backend).pack(side=tk.LEFT, padx=5)
         Radiobutton(backend_select_frame, text="OpenAI", variable=self.backend_var, value="openai", command=self.change_backend).pack(side=tk.LEFT, padx=5)
         
@@ -6002,6 +6103,9 @@ class OllamaGUI:
                 self.transformers_model = None
             if hasattr(self, 'transformers_tokenizer') and self.transformers_tokenizer:
                 self.transformers_tokenizer = None
+            if getattr(self, "exl3_generator", None) or getattr(self, "exl3_model", None):
+                self.display_status_message("Unloading EXL3 model...")
+                self._unload_exl3_runtime()
             if hasattr(self, 'llama_cpp_model') and self.llama_cpp_model:
                 self.display_status_message("Unloading llama-cpp model...")
                 self.llama_cpp_model = None
@@ -6566,6 +6670,11 @@ Based on the above context, please answer: {input_text}"""
                     if not self.transformers_model or not self.transformers_tokenizer:
                         raise Exception("No Transformers model loaded. Please load a model first.")
                     full_response = self.stream_transformers_response(display_message)
+
+                elif backend == "exl3":
+                    if not getattr(self, "exl3_generator", None):
+                        raise Exception("No EXL3 model loaded. Please load a model first.")
+                    full_response = self.stream_exl3_response(display_message)
 
                 else:
                     # Ollama backend (default)
@@ -8477,6 +8586,121 @@ Based on the above context, please answer: {input_text}"""
                 self.append_to_chat(f"\n[{error_msg}]")
             return error_msg
 
+    def stream_exl3_response(self, display_message=None):
+        """Stream response using EXL3 (ExLlamaV3). Expects CUDA; model loaded via load_exl3_model."""
+        full_response = ""
+        if not EXLLAMAV3_AVAILABLE:
+            error_msg = "EXL3 backend unavailable (exllamav3 not installed or no CUDA)."
+            self.append_to_chat(f"\n[{error_msg}]")
+            return error_msg
+        if not getattr(self, "exl3_generator", None) or not getattr(self, "exl3_tokenizer", None):
+            error_msg = "EXL3 model not loaded. Click Load Model after selecting an EXL3 export."
+            self.append_to_chat(f"\n[{error_msg}]")
+            return error_msg
+        try:
+            import torch
+            tokenizer = self.exl3_tokenizer
+            config = self.exl3_config
+            generator = self.exl3_generator
+            cli_args = self.exl3_cli_args
+            if cli_args is None:
+                error_msg = "EXL3 internal state missing. Reload the model."
+                self.append_to_chat(f"\n[{error_msg}]")
+                return error_msg
+
+            messages = []
+            if self.system_message and self.system_message.get("content"):
+                messages.append({"role": "system", "content": self.system_message["content"]})
+            for msg in self.messages:
+                if msg["role"] in ("user", "assistant", "system"):
+                    if isinstance(msg["content"], str):
+                        messages.append({"role": msg["role"], "content": msg["content"]})
+                    elif isinstance(msg["content"], list):
+                        text_content = ""
+                        for item in msg["content"]:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                text_content += item.get("text", "")
+                        if text_content:
+                            messages.append({"role": msg["role"], "content": text_content})
+
+            model_path = self.selected_exl3_path.get()
+            messages = self._messages_with_gemma_think_token(messages, model_name=model_path)
+
+            # Plain prompt: ExLlamaV3 exports vary; this matches the IDE's Transformers fallback style.
+            prompt = ""
+            for msg in messages:
+                role = msg["role"]
+                content = msg["content"]
+                if not isinstance(content, str):
+                    continue
+                if role == "system":
+                    prompt += f"System: {content}\n\n"
+                elif role == "user":
+                    prompt += f"User: {content}\n\n"
+                elif role == "assistant":
+                    prompt += f"Assistant: {content}\n\n"
+            prompt += "Assistant: "
+
+            # add_bos=False: most EXL3 instruct exports expect the formatted string only (see exllamav3 chat examples).
+            ids = tokenizer.encode(prompt, add_bos=False, encode_special_tokens=True)
+
+            cli_args.temperature = float(self.temperature.get())
+            cli_args.top_p = float(self.top_p.get())
+            cli_args.top_k = int(self.top_k.get())
+            cli_args.repetition_penalty = float(self.repetition_penalty.get())
+            sampler = Exl3_model_init.get_arg_sampler(cli_args)
+
+            stop_conditions = []
+            eos_id = getattr(tokenizer, "eos_token_id", None)
+            if eos_id is not None:
+                stop_conditions.append(eos_id)
+            eid_list = getattr(config, "eos_token_id_list", None)
+            if eid_list and all(eid_list):
+                for x in eid_list:
+                    stop_conditions.append(int(x))
+            stop_conditions = list(dict.fromkeys(stop_conditions))
+
+            max_new_tokens = int(self.max_tokens_var.get())
+            job = Exl3Job(
+                input_ids=ids,
+                max_new_tokens=max_new_tokens,
+                stop_conditions=stop_conditions if stop_conditions else None,
+                sampler=sampler,
+                banned_strings=[],
+            )
+            generator.enqueue(job)
+
+            with torch.inference_mode():
+                while generator.num_remaining_jobs():
+                    if self.stop_generation:
+                        try:
+                            generator.cancel(job)
+                        except Exception:
+                            pass
+                        break
+                    for r in generator.iterate():
+                        chunk = r.get("text", "") or ""
+                        if chunk:
+                            full_response += chunk
+                            self.append_to_chat(chunk)
+                        if r.get("eos"):
+                            break
+                    if self.stop_generation:
+                        break
+
+            try:
+                if hasattr(generator, "clear_queue"):
+                    generator.clear_queue()
+            except Exception:
+                pass
+
+            return full_response.strip()
+        except Exception as e:
+            error_msg = f"Error during EXL3 generation: {str(e)}"
+            self.append_to_chat(f"\n[{error_msg}]")
+            self.add_to_debug_console(f"EXL3 generation: {error_msg}")
+            return error_msg
+
     def stream_response(self, model_to_use, has_image=False):
         """Legacy method for backward compatibility"""
         # Just delegate to the appropriate method
@@ -9181,6 +9405,13 @@ Based on the above context, please answer: {input_text}"""
                     self.display_status_message(f"Available GGUF models:\n{model_list}")
                 else:
                     self.display_status_message("No GGUF models found. Check your GGUF_Models directory.")
+            elif backend == "exl3":
+                self.refresh_exl3_models()
+                if self.available_exl3_models:
+                    model_list = "\n".join([os.path.basename(p) for p in self.available_exl3_models])
+                    self.display_status_message(f"Available EXL3 models:\n{model_list}")
+                else:
+                    self.display_status_message("No EXL3 models found. Set CODERUNNER_EXL3_MODELS or use Models_EXL3 paths (see README).")
             else:
                 # Refresh and display Ollama models
                 self.refresh_models()
@@ -9672,6 +9903,12 @@ Based on the above context, please answer: {input_text}"""
                         self.selected_transformers_path.set(path)
                         break
                 self.model_status_label.config(text=f"Model selected: {selected_model} - click 'Load Model' to load")
+            elif backend == "exl3":
+                for path in self.available_exl3_models:
+                    if os.path.basename(path) == selected_model:
+                        self.selected_exl3_path.set(path)
+                        break
+                self.model_status_label.config(text=f"Model selected: {selected_model} - click 'Load Model' to load")
             elif backend == "claude":
                 # Sync with claude_model_var
                 self.claude_model_var.set(selected_model)
@@ -9885,8 +10122,12 @@ Based on the above context, please answer: {input_text}"""
 
     def change_backend(self):
         """Handle backend selection change"""
+        prev_backend = getattr(self, "_current_backend_choice", None)
         backend = self.backend_var.get()
-        
+        if prev_backend == "exl3" and backend != "exl3":
+            self._unload_exl3_runtime()
+        self._current_backend_choice = backend
+
         if backend == "ollama":
             # Populate dropdown with Ollama models
             self.model_dropdown['values'] = self.available_models
@@ -10044,6 +10285,40 @@ Based on the above context, please answer: {input_text}"""
             if self.llama_cpp_model:
                 self.llama_cpp_model = None
 
+        elif backend == "exl3":
+            if not EXLLAMAV3_AVAILABLE:
+                self.display_status_message(
+                    "EXL3 backend unavailable. Install exllamav3 with CUDA PyTorch (see README)."
+                )
+                self.backend_var.set("ollama")
+                return
+            if self.available_exl3_models:
+                exl3_display_names = [os.path.basename(p) for p in self.available_exl3_models]
+                self.model_dropdown['values'] = exl3_display_names
+            else:
+                self.refresh_exl3_models()
+                if self.available_exl3_models:
+                    exl3_display_names = [os.path.basename(p) for p in self.available_exl3_models]
+                    self.model_dropdown['values'] = exl3_display_names
+                else:
+                    self.model_dropdown['values'] = []
+            self.max_tokens_frame.pack(fill=tk.X, pady=(0, 10))
+
+            if self.exl3_generator and self.selected_exl3_path.get():
+                model_name = os.path.basename(self.selected_exl3_path.get())
+                self.model_var.set(model_name)
+                self.model_status_label.config(text=f"Loaded: {model_name}", fg="green")
+            else:
+                if self.available_exl3_models:
+                    first_path = self.available_exl3_models[0]
+                    self.model_var.set(os.path.basename(first_path))
+                    self.selected_exl3_path.set(first_path)
+                    self.model_status_label.config(text="EXL3 model ready — click 'Load Model'", fg="orange")
+                else:
+                    self.model_var.set("")
+                    self.model_status_label.config(text="No EXL3 models found (see Models_EXL3 paths)", fg="red")
+            if self.llama_cpp_model:
+                self.llama_cpp_model = None
 
         elif backend == "claude":
             # Populate dropdown with Claude models
@@ -10099,7 +10374,7 @@ Based on the above context, please answer: {input_text}"""
 
         # Determine model name from all possible sources
         model_name = self.model_var.get().lower()
-        for attr in ('selected_mlx_path', 'selected_gguf_path', 'selected_transformers_path'):
+        for attr in ('selected_mlx_path', 'selected_gguf_path', 'selected_transformers_path', 'selected_exl3_path'):
             v = getattr(self, attr, None)
             if v:
                 val = v.get() if hasattr(v, 'get') else str(v)
@@ -10139,6 +10414,8 @@ Based on the above context, please answer: {input_text}"""
             self.load_vllm_model()
         elif backend == "transformers":
             self.load_transformers_model()
+        elif backend == "exl3":
+            self.load_exl3_model()
         elif backend == "claude":
             self.load_claude_model()
         elif backend == "openai":
@@ -10170,6 +10447,8 @@ Based on the above context, please answer: {input_text}"""
             self.refresh_vllm_models()
         elif backend == "transformers":
             self.refresh_transformers_models()
+        elif backend == "exl3":
+            self.refresh_exl3_models()
         elif backend == "claude":
             self.refresh_claude_models()
         elif backend == "openai":
@@ -10303,8 +10582,14 @@ Based on the above context, please answer: {input_text}"""
                 chat_format = None  # Let llama-cpp-python auto-detect
                 n_gpu_layers = get_optimal_gpu_layers(model_path, model_name)
             elif "qwen" in model_name:
-                # Qwen models support large context
-                n_ctx = 262144  # 256k context for Qwen models
+                # Qwen GGUF metadata can advertise 256k+ ctx; reserving that allocates huge CUDA graphs
+                # and commonly OOMs a single 24GB GPU (see llama graph_reserve / cudaMalloc). Use a
+                # practical default; raise with CODERUNNER_GGUF_N_CTX (e.g. 65536) only if you have VRAM.
+                try:
+                    _gguf_ctx = int(os.environ.get("CODERUNNER_GGUF_N_CTX", "32768"))
+                except ValueError:
+                    _gguf_ctx = 32768
+                n_ctx = max(4096, min(_gguf_ctx, 262144))
                 chat_format = "chatml"
                 n_gpu_layers = get_optimal_gpu_layers(model_path, model_name)
             else:
@@ -10351,13 +10636,16 @@ Based on the above context, please answer: {input_text}"""
             print(f"   GPU Layers: {n_gpu_layers}")
             print(f"   Chat Format: {chat_format}")
 
+            # n_batch scales VRAM for CUDA graph reserve; keep below n_ctx and modest for large n_ctx.
+            n_batch_clamped = min(2048, max(256, n_ctx // 64))
+
             # Initialize the model with optimized settings for high RAM system
             self.llama_cpp_model = Llama(
                 model_path=model_path,
                 n_ctx=n_ctx,  # Adaptive context window based on model type
                 n_threads=16,  # More CPU threads for better performance
                 n_threads_batch=8,  # Batch processing threads
-                n_batch=2048,  # Larger batch size for efficiency
+                n_batch=n_batch_clamped,
                 use_mlock=True,  # Lock memory to prevent swapping
                 use_mmap=True,  # Memory-map the model file
                 rope_freq_base=1000000.0,  # RoPE frequency base for modern models
@@ -10577,6 +10865,9 @@ Based on the above context, please answer: {input_text}"""
         if hasattr(self, 'model') and self.model:
             self.display_status_message(f"Unloading Ollama model: {self.model}")
             self.model = None
+        if getattr(self, "exl3_generator", None) or getattr(self, "exl3_model", None):
+            self.display_status_message("Unloading EXL3 model...")
+            self._unload_exl3_runtime()
 
         # Clear GPU memory when switching models
         clear_gpu_memory()
@@ -10708,6 +10999,154 @@ Based on the above context, please answer: {input_text}"""
             self.root.after(0, lambda: self.load_model_btn.config(state=tk.NORMAL, text="Load Model"))
             self.root.after(0, lambda: self.display_status_message(f"Failed to load vLLM model: {error_msg}"))
 
+    def _unload_exl3_runtime(self):
+        """Release EXL3 (ExLlamaV3) weights/cache from GPU. Safe if partially loaded or unavailable."""
+        try:
+            gen = getattr(self, "exl3_generator", None)
+            if gen is not None and EXLLAMAV3_AVAILABLE:
+                try:
+                    if hasattr(gen, "clear_queue"):
+                        gen.clear_queue()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self.exl3_generator = None
+        self.exl3_model = None
+        self.exl3_cache = None
+        self.exl3_tokenizer = None
+        self.exl3_config = None
+        self.exl3_cli_args = None
+        try:
+            import gc
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    try:
+                        torch.cuda.set_device(i)
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def refresh_exl3_models(self):
+        """Rescan EXL3 model roots and refresh the dropdown when on EXL3 backend."""
+        try:
+            self.available_exl3_models = get_available_exl3_models()
+            if self.available_exl3_models:
+                self.display_status_message(f"Found {len(self.available_exl3_models)} EXL3 models")
+                current_path = self.selected_exl3_path.get()
+                if current_path and current_path not in self.available_exl3_models:
+                    self.selected_exl3_path.set(self.available_exl3_models[0])
+            else:
+                self.display_status_message("No EXL3 models found (tokenizer + .safetensors/.exl3 under Models_EXL3 roots)")
+            if self.backend_var.get() == "exl3":
+                if self.available_exl3_models:
+                    self.model_dropdown["values"] = [os.path.basename(p) for p in self.available_exl3_models]
+                else:
+                    self.model_dropdown["values"] = []
+        except Exception as e:
+            self.display_status_message(f"Error refreshing EXL3 models: {str(e)}")
+            self.available_exl3_models = []
+
+    def load_exl3_model(self):
+        """Load the selected EXL3 (ExLlamaV3) export. Targets NVIDIA CUDA on Linux (e.g. RTX 4090, RTX 6000 Ada)."""
+        if not EXLLAMAV3_AVAILABLE:
+            self.display_status_message(
+                "EXL3 unavailable: install exllamav3 with CUDA-enabled PyTorch (see README)."
+            )
+            return
+
+        model_path = self.selected_exl3_path.get()
+        if not model_path or not os.path.exists(model_path):
+            self.display_status_message("Selected EXL3 model path not found. Refresh the list or set CODERUNNER_EXL3_MODELS.")
+            return
+
+        if getattr(self, "exl3_generator", None) or getattr(self, "exl3_model", None):
+            self.display_status_message("Unloading previous EXL3 model...")
+            self._unload_exl3_runtime()
+
+        if self.transformers_model:
+            self.display_status_message("Unloading Transformers model...")
+            self.transformers_model = None
+            self.transformers_tokenizer = None
+        if self.llama_cpp_model:
+            self.display_status_message("Unloading llama-cpp model...")
+            self.llama_cpp_model = None
+        if self.mlx_model:
+            self.display_status_message("Unloading MLX model...")
+            self.mlx_model = None
+            self.mlx_tokenizer = None
+        if hasattr(self, "vllm_model") and self.vllm_model:
+            self.display_status_message("Unloading vLLM model...")
+            self.vllm_model = None
+        if hasattr(self, "model") and self.model:
+            self.display_status_message(f"Unloading Ollama model: {self.model}")
+            self.model = None
+
+        clear_gpu_memory()
+
+        self.load_model_btn.config(state=tk.DISABLED, text="Loading...")
+        self.model_status_label.config(text="Loading EXL3 model...")
+        threading.Thread(target=self._load_exl3_model_thread, args=(model_path,), daemon=True).start()
+
+    def _load_exl3_model_thread(self, model_path):
+        """Background load for ExLlamaV3 (uses model_init.init like upstream examples/chat.py)."""
+        try:
+            import torch
+            from argparse import ArgumentParser
+
+            parser = ArgumentParser(add_help=False)
+            Exl3_model_init.add_args(parser, cache=True, add_sampling_args=True, add_draft_model_args=False)
+            cache_sz = os.environ.get("CODERUNNER_EXL3_CACHE_SIZE", "32768").strip()
+            if not cache_sz.isdigit():
+                cache_sz = "32768"
+            args = parser.parse_args(["-m", model_path, "-cs", cache_sz])
+            args.temperature = float(self.temperature.get())
+            args.top_p = float(self.top_p.get())
+            args.top_k = int(self.top_k.get())
+            args.repetition_penalty = float(self.repetition_penalty.get())
+
+            model_name = os.path.basename(model_path)
+            self.add_to_debug_console(f"Loading EXL3 model: {model_name} (cache_size={cache_sz})")
+
+            model, config, cache, tokenizer = Exl3_model_init.init(
+                args, load_tokenizer=True, progress=True, quiet=False
+            )
+            generator = Exl3Generator(model=model, cache=cache, tokenizer=tokenizer)
+
+            self.exl3_model = model
+            self.exl3_config = config
+            self.exl3_cache = cache
+            self.exl3_tokenizer = tokenizer
+            self.exl3_generator = generator
+            self.exl3_cli_args = args
+
+            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                gpu_name = ", ".join(torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count()))
+                memory_gb = sum(torch.cuda.memory_allocated(i) for i in range(torch.cuda.device_count())) / (1024**3)
+            else:
+                gpu_name = "unknown"
+                memory_gb = 0.0
+
+            self.root.after(0, lambda: self.model_status_label.config(text=f"Loaded: {model_name}", fg="green"))
+            self.root.after(0, lambda: self.load_model_btn.config(state=tk.NORMAL, text="Load Model"))
+            self.root.after(
+                0,
+                lambda: self.display_status_message(
+                    f"Loaded EXL3 model: {model_name} on {gpu_name} (~{memory_gb:.1f} GB allocated)"
+                ),
+            )
+        except Exception as e:
+            error_msg = str(e)
+            self._unload_exl3_runtime()
+            self.root.after(0, lambda: self.model_status_label.config(text=f"Load failed: {error_msg[:50]}...", fg="red"))
+            self.root.after(0, lambda: self.load_model_btn.config(state=tk.NORMAL, text="Load Model"))
+            self.root.after(0, lambda: self.display_status_message(f"Failed to load EXL3 model: {error_msg}"))
+            self.root.after(0, lambda: self.add_to_debug_console(f"EXL3 load failed: {error_msg}"))
+
     def load_transformers_model(self):
         """Load the selected Transformers model"""
         if not TRANSFORMERS_AVAILABLE:
@@ -10736,6 +11175,9 @@ Based on the above context, please answer: {input_text}"""
         if hasattr(self, 'vllm_model') and self.vllm_model:
             self.display_status_message("Unloading vLLM model...")
             self.vllm_model = None
+        if getattr(self, "exl3_generator", None) or getattr(self, "exl3_model", None):
+            self.display_status_message("Unloading EXL3 model...")
+            self._unload_exl3_runtime()
         if hasattr(self, 'model') and self.model:
             self.display_status_message(f"Unloading Ollama model: {self.model}")
             self.model = None
@@ -11426,7 +11868,7 @@ Based on the above context, please answer: {input_text}"""
 
         # Local backends: MLX, Ollama, GGUF, vLLM, Transformers
         model = self.model_var.get().lower()
-        for attr in ('selected_mlx_path', 'selected_gguf_path', 'selected_transformers_path'):
+        for attr in ('selected_mlx_path', 'selected_gguf_path', 'selected_transformers_path', 'selected_exl3_path'):
             v = getattr(self, attr, None)
             if v:
                 val = v.get() if hasattr(v, 'get') else str(v)

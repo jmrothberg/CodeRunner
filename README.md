@@ -140,11 +140,16 @@ The editor is read-only while showing the diff so you can't accidentally edit du
 | **MLX** | Apple Silicon optimized | M1/M2/M3/M4 Macs (default on macOS) |
 | **vLLM** | High-throughput inference | NVIDIA GPUs, production |
 | **Transformers** | HuggingFace models | Latest models (default on Linux) |
+| **EXL3** | ExLlamaV3 quantized exports (`.safetensors` / `.exl3`) | NVIDIA CUDA on Linux (e.g. RTX 4090, RTX 6000 Ada); optional `pip install exllamav3` |
 | **Blackwell** | NVIDIA Blackwell/DGX | Cutting-edge NVIDIA hardware |
 | **Claude** | Anthropic API | Best cloud coding model |
 | **OpenAI** | OpenAI API (GPT-4/5) | Cloud fallback |
 
 **Platform-aware defaults**: MLX is auto-selected on macOS (Apple Silicon), Transformers on Linux. Falls back to Claude if neither is available.
+
+**Ubuntu / Transformers note**: Qwen3.6 has been observed running through the Transformers backend on Ubuntu, but it can be much slower than expected. One Qwen3.6 run completed successfully after about **35 minutes** instead of the expected **5 minutes** (roughly **7x slower**). Treat large Qwen3.6 Transformers runs on Ubuntu as functional but potentially very slow, especially with FP8/kernel fallback paths.
+
+**EXL3 (ExLlamaV3)**: Install a CUDA-enabled PyTorch build, then `pip install exllamav3` (upstream may ship wheels or require a local compile matching your CUDA). Point the app at folders containing `tokenizer.json` or `tokenizer.model` plus weight shards (`*.safetensors` or `*.exl3`). Default scan paths include `~/Models_EXL3`, `/data/Models_EXL3`, and `/media/jonathan/data/Models_EXL3`. Override with `CODERUNNER_EXL3_MODELS` (one path, or multiple paths separated by your OS path separator). Optional: `CODERUNNER_EXL3_CACHE_SIZE` (token count for the KV cache, default `32768`) if you need a smaller footprint on VRAM.
 
 ### SEARCH/REPLACE Block Editing
 

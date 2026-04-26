@@ -23,6 +23,7 @@ pandas>=2.0.0
 # mlx>=0.5.0               # For Apple Silicon (macOS only)
 # mlx-lm>=0.5.0            # For Apple Silicon (macOS only)
 # vllm>=0.3.0              # For NVIDIA GPU acceleration
+# exllamav3                # EXL3 backend — optional; needs CUDA PyTorch; see README
 
 # Transformers (for HuggingFace models)
 transformers>=4.40.0
