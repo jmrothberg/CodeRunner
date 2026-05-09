@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hangman Game</title>
+    
+    <!-- ============================================== -->
+    <!-- CSS STYLES (Embedded) -->
+    <!-- ============================================== -->
+    <style>
+        /* --- Global Styles --- */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background-color: #f4f4f9;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .game-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-around;
+            width: 90%;
+            max-width: 900px;
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* --- Hangman Graphic Styling --- */
+        #hangman-drawing {
+            /* Redefining the visual structure */
+            width: 200px;
+            height: 350px;
+            position: relative;
+        }
+
+        /* Base Structure (Gallows) */
+        .gallowe-structure {
+            position: absolute;
+            left: 0; top: 10px; bottom: 20px; width: 10px;
+            background-color: #734820; /* Brown wood */
+        }
+        .gallowe-structure-beam {
+            position: absolute;
+            left: 0; top: 10px; bottom: 20px; width: 150px; height: 10px;
+            background-color: #734820;
+        }
+        .gallowe-structure-rope {
+            position: absolute;
+            left: 150px; top: 0; width: 10px; height: 20px;
+            background-color: #734820;
+        }
+
+        /* Body parts - default hidden state */
+        .part {
+            position: absolute;
+            background-color: #333; 
+        }
+
+        #head {
+            width: 60px; height: 60px; left: 150px; top: 10px;
+            border-radius: 50%; /* Makes it round */
+        }
+        #body {
+            width: 10px; height: 80px; left: 155px; top: 70px;
+        }
+        /* Arms need rotation to look natural */
+        #left-arm {
+            width: 60px; height: 10px; left: 150px; top: 110px; 
+            transform: rotate(45deg); 
+            transform-origin: 0 0;
+        }
+        #right-arm {
+            width: 60px; height: 10px; left: 155px; top: 110px; 
+            transform: rotate(-45deg); 
+            transform-origin: 0 0;
+        }
+        #left-leg {
+            width: 10px; height: 60px; left: 155px; top: 150px;
+        }
+        #right-leg {
+            width: 10px; height: 60px; left: 150px; top: 150px;
+        }
+
+        /* --- Visibility Control (THE GRAPHIC KEY) --- */
+        /* Start all body parts as hidden */
+        .hidden {
+            display: none !important; 
+        }
+
+        /* Make visible when the guess is wrong */
+        .visible {
+            display: block !important; 
+        }
+
+        /* --- Display and Input Area --- */
+        .display {
+            font-size: 3em;
+            letter-spacing: 15px;
+            margin-bottom: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        #message {
+            min-height: 20px;
+            color: #d9534f;
+            font-weight: bold;
+        }
+
+        .input-area {
+            margin-top: 10px;
+        }
+
+        #guess-input, #guess-button {
+            padding: 10px;
+            font-size: 1em;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+
+        #guess-button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            margin-left: 10px;
+            transition: background-color 0.2s;
+        }
+
+        #guess-button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+
+        #guess-button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .guessed-letters {
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .guessed-letters span {
+            background-color: #eee;
+            color: #333;
+            padding: 5px 10px;
+            margin: 5px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1 id="title">The Hangman Game</h1>
+
+    <div class="game-container">
+        
+        <!-- HANGMAN GRAPHIC AREA -->
+        <div id="hangman-drawing">
+            <!-- The Gallows Structure (Fixed pieces) -->
+            <div class="gallowe-structure"></div>
+            <div class="gallowe-structure-beam"></div>
+            <div class="gallowe-structure-rope"></div>
+
+            <!-- The Body Parts (Controlled by JS) -->
+            <div id="head" class="part hidden"></div>
+            <div id="body" class="part hidden"></div>
+            <div id="left-arm" class="part hidden"></div>
+            <div id="right-arm" class="part hidden"></div>
+            <div id="left-leg" class="part hidden"></div>
+            <div id="right-leg" class="part hidden"></div>
+        </div>
+
+        <!-- GAME DISPLAY -->
+        <div>
+            <div id="word-display" class="display"></div>
+            <p id="message">Guess a letter to start!</p>
+            
+            <div class="input-area">
+                <input type="text" id="guess-input" maxlength="1" placeholder="Enter letter (A-Z)" autofocus>
+                <button id="guess-button">Guess</button>
+            </div>
+
+            <h3 style="margin-top: 20px;">Guessed Letters:</h3>
+            <div id="guessed-letters" class="guessed-letters"></div>
+            
+            <button id="restart-button" style="display: none; margin-top: 20px; padding: 10px 20px;">Play Again</button>
+        </div>
+
+    </div>
+
+    <!-- ============================================== -->
+    <!-- JAVASCRIPT LOGIC (Embedded) -->
+    <!-- ============================================== -->
+    <script>
+        // --- Game State Variables ---
+        const words = ["JAVASCRIPT", "PROGRAMMING", "DEVELOPER", "COMPUTER", "ALGORITHM", "ENGINEERING"];
+        let secretWord = '';
+        let maxWrongGuesses = 6; 
+        let wrongGuesses = 0;
+        let correctGuesses = new Set(); 
+        let wrongLetterHistory = new Set(); 
+        let isGameOver = false;
+
+        // --- DOM Elements ---
+        const wordDisplayEl = document.getElementById('word-display');
+        const messageEl = document.getElementById('message');
+        const guessInputEl = document.getElementById('guess-input');
+        const guessButtonEl = document.getElementById('guess-button');
+        const guessedLettersEl = document.getElementById('guessed-letters');
+        const restartButtonEl = document.getElementById('restart-button');
+        
+        // Mapping the body parts for easy access
+        const hangmanParts = {
+            head: document.getElementById('head'),
+            body: document.getElementById('body'),
+            'left-arm': document.getElementById('left-arm'),
+            'right-arm': document.getElementById('right-arm'),
+            'left-leg': document.getElementById('left-leg'),
+            'right-leg': document.getElementById('right-leg')
+        };
+
+
+        // --- Functions ---
+
+        /**
+         * Initializes or resets the game state.
+         */
+        function initGame() {
+            // 1. Select a random word
+            const randomIndex = Math.floor(Math.random() * words.length);
+            secretWord = words[randomIndex];
+
+            // 2. Reset state
+            wrongGuesses = 0;
+            correctGuesses.clear();
+            wrongLetterHistory.clear();
+            isGameOver = false;
+
+            // 3. Update the UI
+            updateWordDisplay();
+            updateHangman();
+            updateGuessedLettersDisplay();
+            messageEl.textContent = 'Good luck! Start guessing.';
+            guessInputEl.value = '';
+            guessInputEl.focus(); // Focus input on start
+            guessInputEl.disabled = false;
+            guessButtonEl.disabled = false;
+            restartButtonEl.style.display = 'none';
+        }
+
+        /**
+         * Updates the visual display of the word (e.g., _ _ A _ _).
+         */
+        function updateWordDisplay() {
+            let display = '';
+            for (const char of secretWord) {
+                if (correctGuesses.has(char)) {
+                    display += char;
+                } else {
+                    display += '_';
+                }
+            }
+            wordDisplayEl.textContent = display.replace(/_/g, ' ');
+        }
+
+        /**
+         * Manages the visual state of the hangman drawing.
+         */
+        function updateHangman() {
+            // Reset all parts to hidden class
+            for (const partId in hangmanParts) {
+                hangmanParts[partId].classList.remove('visible');
+                hangmanParts[partId].classList.add('hidden');
+            }
+
+            // Draw the parts based on the number of wrong guesses (0 to 6)
+            if (wrongGuesses >= 1) {
+                hangmanParts['head'].classList.remove('hidden');
+                hangmanParts['head'].classList.add('visible');
+            }
+            if (wrongGuesses >= 2) {
+                hangmanParts['body'].classList.remove('hidden');
+                hangmanParts['body'].classList.add('visible');
+            }
+            if (wrongGuesses >= 3) {
+                hangmanParts['left-arm'].classList.remove('hidden');
+                hangmanParts['left-arm'].classList.add('visible');
+                hangmanParts['right-arm'].classList.remove('hidden');
+                hangmanParts['right-arm'].classList.add('visible');
+            }
+            if (wrongGuesses >= 4) {
+                hangmanParts['left-leg'].classList.remove('hidden');
+                hangmanParts['left-leg'].classList.add('visible');
+                hangmanParts['right-leg'].classList.remove('hidden');
+                hangmanParts['right-leg'].classList.add('visible');
+            }
+        }
+
+        /**
+         * Updates the alphabetical list of letters guessed.
+         */
+        function updateGuessedLettersDisplay() {
+            guessedLettersEl.innerHTML = '';
+            // Combine correct and wrong letters into one set
+            const allGuessed = new Set([...correctGuesses, ...wrongLetterHistory]);
+
+            for (const letter of allGuessed) {
+                const span = document.createElement('span');
+                span.textContent = letter;
+                guessedLettersEl.appendChild(span);
+            }
+        }
+
+        /**
+         * Processes the user's guess.
+         */
+        function handleGuess() {
+            if (isGameOver) return;
+            
+            let letter = guessInputEl.value.toUpperCase().trim();
+
+            if (letter.length !== 1 || !/[A-Z]/.test(letter)) {
+                messageEl.textContent = "🛑 Please enter a single valid letter (A-Z).";
+                return;
+            }
+
+            // Check if already guessed
+            if (correctGuesses.has(letter) || wrongLetterHistory.has(letter)) {
+                messageEl.textContent = `⚠️ You already guessed the letter '${letter}'. Try another one!`;
+                guessInputEl.focus();
+                return;
+            }
+
+            // --- Core Logic ---
+            if (secretWord.includes(letter)) {
+                // Correct Guess
+                correctGuesses.add(letter);
+                messageEl.textContent = `✅ Correct! '${letter}' is in the word.`;
+            } else {
+                // Wrong Guess
+                wrongLetterHistory.add(letter);
+                wrongGuesses++;
+                messageEl.textContent = `❌ Wrong! '${letter}' was not used.`;
+            }
+
+            // 1. Update UI after guess
+            updateWordDisplay();
+            updateHangman();
+            updateGuessedLettersDisplay();
+            
+            // 2. Check Game End Conditions
+            if (checkWinCondition()) {
+                endGame(true);
+            } else if (checkLossCondition()) {
+                endGame(false);
+            } else {
+                // If game continues, clear input and focus for next guess
+                guessInputEl.value = ''; 
+                guessInputEl.focus();
+            }
+        }
+
+
+        /**
+         * Checks if the player has won.
+         * @returns {boolean} True if the word is fully guessed.
+         */
+        function checkWinCondition() {
+            const uniqueLettersInWord = new Set(secretWord);
+            for (const letter of uniqueLettersInWord) {
+                if (!correctGuesses.has(letter)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Checks if the player has lost.
+         * @returns {boolean} True if wrong guesses = max wrong guesses.
+         */
+        function checkLossCondition() {
+            return wrongGuesses >= maxWrongGuesses;
+        }
+
+        /**
+         * Sets the game over state and displays the result.
+         * @param {boolean} didWin - True if the player won, false if they lost.
+         */
+        function endGame(didWin) {
+            isGameOver = true;
+            guessInputEl.disabled = true;
+            guessButtonEl.disabled = true;
+            restartButtonEl.style.display = 'block';
+            guessInputEl.blur(); // Remove focus
+
+            if (didWin) {
+                messageEl.textContent = `🎉 Congratulations! You saved the man! The word was ${secretWord}.`;
+                messageEl.style.color = '#28a745';
+            } else {
+                messageEl.textContent = `💀 Game Over! You ran out of guesses. The word was ${secretWord}.`;
+                messageEl.style.color = '#dc3545';
+            }
+        }
+
+
+        // --- Event Listeners ---
+
+        // Button Click Listener
+        guessButtonEl.addEventListener('click', handleGuess);
+
+        // Enter Key Listener (Allows pressing Enter to guess)
+        guessInputEl.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                handleGuess();
+            }
+        });
+
+        // Restart Button Listener
+        restartButtonEl.addEventListener('click', initGame);
+
+        // Start the game!
+        initGame();
+
+    </script>
+</body>
+</html>
